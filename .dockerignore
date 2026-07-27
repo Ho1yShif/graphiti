@@ -1,0 +1,31 @@
+# The root Dockerfile only needs server/, so keep everything else out of the build
+# context. Smaller context, faster uploads, and no chance of a local .env sneaking in.
+.git
+.github
+.venv
+venv
+env
+**/.venv
+**/__pycache__
+**/*.pyc
+.pytest_cache
+.ruff_cache
+.mypy_cache
+
+# Never ship local secrets into an image layer.
+.env
+.env.*
+!.env.example
+
+tests
+examples
+images
+signatures
+spec
+mcp_server
+docs
+*.md
+!server/README.md
+docker-compose*.yml
+Dockerfile
+.dockerignore

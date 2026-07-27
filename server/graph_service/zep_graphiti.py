@@ -78,7 +78,7 @@ class ZepGraphiti(Graphiti):
             raise HTTPException(status_code=404, detail=e.message) from e
 
 
-def _create_graphiti_client(settings: ZepEnvDep) -> ZepGraphiti:
+def create_graphiti_client(settings: ZepEnvDep) -> ZepGraphiti:
     """Create a ZepGraphiti client based on the configured database backend."""
     if settings.db_backend == 'falkordb':
         from graphiti_core.driver.falkordb_driver import FalkorDriver
@@ -86,6 +86,8 @@ def _create_graphiti_client(settings: ZepEnvDep) -> ZepGraphiti:
         driver = FalkorDriver(  # type: ignore
             host=settings.falkordb_host or 'localhost',  # type: ignore
             port=settings.falkordb_port or 6379,  # type: ignore
+            username=settings.falkordb_username,  # type: ignore
+            password=settings.falkordb_password,  # type: ignore
             database=settings.falkordb_database or 'default_db',  # type: ignore
         )
         return ZepGraphiti(graph_driver=driver)  # type: ignore
@@ -104,7 +106,7 @@ def _create_graphiti_client(settings: ZepEnvDep) -> ZepGraphiti:
 
 
 async def get_graphiti(settings: ZepEnvDep):
-    client = _create_graphiti_client(settings)
+    client = create_graphiti_client(settings)
     if settings.openai_base_url is not None:
         client.llm_client.config.base_url = settings.openai_base_url
     if settings.openai_api_key is not None:
@@ -119,7 +121,7 @@ async def get_graphiti(settings: ZepEnvDep):
 
 
 async def initialize_graphiti(settings: ZepEnvDep):
-    client = _create_graphiti_client(settings)
+    client = create_graphiti_client(settings)
     try:
         await client.build_indices_and_constraints()
     finally:

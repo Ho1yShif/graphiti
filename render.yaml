@@ -1,0 +1,85 @@
+# Graphiti on Render — a temporal knowledge graph API backed by FalkorDB.
+#
+# graphiti-api      public REST service, built from the repo's root Dockerfile
+# graphiti-falkordb the graph store, private: reachable only from graphiti-api
+#
+# Secrets are never written here. OPENAI_API_KEY is declared sync: false, so Render
+# prompts for it at deploy time and stores it outside the repo.
+
+previews:
+  generation: off
+
+envVarGroups:
+  - name: graphiti-secrets
+    envVars:
+      - key: OPENAI_API_KEY
+        sync: false
+
+projects:
+  - name: graphiti
+    environments:
+      - name: production
+        services:
+          - type: pserv
+            name: graphiti-falkordb
+            runtime: image
+            region: oregon
+            plan: standard
+            image:
+              url: docker.io/falkordb/falkordb:latest
+            disk:
+              name: falkordb-data
+              mountPath: /var/lib/falkordb/data
+              sizeGB: 10
+            envVars:
+              # Append-only file, so the graph survives a restart or redeploy.
+              - key: REDIS_ARGS
+                value: --appendonly yes
+
+          - type: web
+            name: graphiti-api
+            runtime: docker
+            region: oregon
+            plan: standard
+            dockerfilePath: ./Dockerfile
+            dockerContext: .
+            healthCheckPath: /healthcheck
+            envVars:
+              - fromGroup: graphiti-secrets
+
+              # Render exposes env vars to the Docker build as build args, which is how
+              # the root Dockerfile picks up the graphiti-core FalkorDB extra.
+              - key: INSTALL_FALKORDB
+                value: 'true'
+
+              - key: DB_BACKEND
+                value: falkordb
+              - key: FALKORDB_HOST
+                fromService:
+                  name: graphiti-falkordb
+                  type: pserv
+                  property: host
+              - key: FALKORDB_PORT
+                value: '6379'
+              - key: FALKORDB_DATABASE
+                value: default_db
+
+              # The model Graphiti uses to extract entities and facts. Any OpenAI model id.
+              - key: MODEL_NAME
+                value: gpt-5.5
+              # Caps concurrent LLM calls during ingestion. Raise it on a larger plan.
+              - key: SEMAPHORE_LIMIT
+                value: '10'
+
+              # Demo mode is off, so this deploy is the full API. Turning DEMO on makes the
+              # service a public, locked-down showcase — see the README's Demo mode section.
+              - key: DEMO
+                value: 'false'
+              - key: DEMO_RATE_LIMIT_PER_MINUTE
+                value: '10'
+              - key: DEMO_MAX_EPISODES_PER_SESSION
+                value: '30'
+              - key: DEMO_SESSION_TTL_MINUTES
+                value: '60'
+              - key: DEMO_MODEL_NAME
+                value: gpt-4.1-nano

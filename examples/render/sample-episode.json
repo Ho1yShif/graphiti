@@ -1,0 +1,26 @@
+{
+  "group_id": "demo",
+  "messages": [
+    {
+      "name": "kickoff",
+      "role_type": "user",
+      "role": "alex",
+      "content": "I'm Alex, I lead the payments team at Acme. We're migrating our billing service off Stripe Billing and onto our own ledger by the end of Q3.",
+      "source_description": "Render template sample episode"
+    },
+    {
+      "name": "kickoff-reply",
+      "role_type": "assistant",
+      "role": "assistant",
+      "content": "Got it. So the payments team at Acme owns billing, and the ledger migration is due end of Q3.",
+      "source_description": "Render template sample episode"
+    },
+    {
+      "name": "update",
+      "role_type": "user",
+      "role": "alex",
+      "content": "Small change: Priya just took over the payments team, so she owns the ledger migration now.",
+      "source_description": "Render template sample episode"
+    }
+  ]
+}
