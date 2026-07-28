@@ -9,12 +9,6 @@
 previews:
   generation: off
 
-envVarGroups:
-  - name: graphiti-secrets
-    envVars:
-      - key: OPENAI_API_KEY
-        sync: false
-
 projects:
   - name: graphiti
     environments:
@@ -45,7 +39,10 @@ projects:
             dockerContext: .
             healthCheckPath: /healthcheck
             envVars:
-              - fromGroup: graphiti-secrets
+              # Declared on the service, not in an env var group: sync: false is silently
+              # ignored inside a group, so Render would never prompt for the value.
+              - key: OPENAI_API_KEY
+                sync: false
 
               # Render exposes env vars to the Docker build as build args, which is how
               # the root Dockerfile picks up the graphiti-core FalkorDB extra.

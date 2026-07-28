@@ -41,7 +41,7 @@ from `graphiti-api` over Render's private network.
 
 1. Click **Deploy to Render** above. Render reads [`render.yaml`](render.yaml) and creates a
    `graphiti` project containing both services.
-2. Create the **`graphiti-secrets`** environment group when prompted and fill in:
+2. Render prompts for one secret on `graphiti-api`:
 
    | Variable         | What it's for                                                                                       | Where to get it                                                      |
    | ---------------- | --------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
@@ -50,17 +50,10 @@ from `graphiti-api` over Render's private network.
    If you use a **restricted** OpenAI key, this deployment needs exactly two of the
    permissions under **Model capabilities**, both write:
 
-   | Permission     | Used for                                                          |
-   | -------------- | ----------------------------------------------------------------- |
-   | **Responses**  | `/v1/responses` — extracting entities and facts from each episode. |
-   | **Embeddings** | `/v1/embeddings` — embedding nodes, edges, and search queries.     |
-
-   Leave **Chat completions**, **Text-to-speech**, **Realtime**, **Images**, and
-   **Moderations** off. Every Graphiti prompt requests a structured response, so the
-   OpenAI client always uses `/v1/responses` and never falls back to chat completions,
-   and the reranker that would use chat completions isn't part of the search path this
-   API exposes. Read-only is not enough for either permission — Graphiti only creates,
-   never reads back.
+   | Permission     | Used for                                                                           |
+   | -------------- | ---------------------------------------------------------------------------------- |
+   | **Responses**  | Write access on `/v1/responses` — extracting entities and facts from each episode. |
+   | **Embeddings** | Request access on /v1/embeddings` — embedding nodes, edges, and search queries.    |
 
    Everything else is set for you in `render.yaml`. The ones worth knowing about:
 
