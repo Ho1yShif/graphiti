@@ -76,6 +76,8 @@ projects:
               # The model Graphiti uses to extract entities and facts. Any OpenAI model id.
               - key: MODEL_NAME
                 value: gpt-5.5
-              # Caps concurrent LLM calls during ingestion. Raise it on a larger plan.
+              # Concurrent LLM calls during ingestion. Held below graphiti-core's default
+              # of 20 so a burst of episodes doesn't trip OpenAI rate limits on a new key.
+              # Raise it once you know your account's limits.
               - key: SEMAPHORE_LIMIT
                 value: '10'

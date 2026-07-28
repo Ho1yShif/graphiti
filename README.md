@@ -57,10 +57,10 @@ from `graphiti-api` over Render's private network.
 
    Everything else is set for you in `render.yaml`. The ones worth knowing about:
 
-   | Variable          | Default   | Notes                                                                 |
-   | ----------------- | --------- | --------------------------------------------------------------------- |
-   | `MODEL_NAME`      | `gpt-5.5` | Any OpenAI model id.                                                  |
-   | `SEMAPHORE_LIMIT` | `10`      | Concurrent LLM calls during ingestion. Raise it on a bigger instance. |
+   | Variable          | Default   | Notes                                                                             |
+   | ----------------- | --------- | --------------------------------------------------------------------------------- |
+   | `MODEL_NAME`      | `gpt-5.5` | Any OpenAI model id.                                                              |
+   | `SEMAPHORE_LIMIT` | `10`      | Concurrent LLM calls during ingestion. Deliberately below graphiti-core's default of 20, so a burst of episodes doesn't trip the rate limits on a fresh OpenAI key. Raise it once you know your account's limits. |
 
 3. Wait for both services to go live. `graphiti-api` passes its health check at `/healthcheck`.
 
