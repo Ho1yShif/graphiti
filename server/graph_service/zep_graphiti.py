@@ -10,7 +10,7 @@ from graphiti_core.errors import EdgeNotFoundError, GroupsEdgesNotFoundError, No
 from graphiti_core.llm_client import LLMClient, LLMConfig, OpenAIClient  # type: ignore
 from graphiti_core.nodes import EntityNode, EpisodicNode  # type: ignore
 
-from graph_service.config import ZepEnvDep
+from graph_service.config import Settings, ZepEnvDep
 from graph_service.dto import FactResult
 
 logger = logging.getLogger(__name__)
@@ -81,7 +81,7 @@ class ZepGraphiti(Graphiti):
 
 
 def _create_openai_clients(
-    settings: ZepEnvDep,
+    settings: Settings,
 ) -> tuple[OpenAIClient, OpenAIEmbedder, OpenAIRerankerClient]:
     """Build the OpenAI-backed clients Graphiti needs, configured from settings.
 
@@ -89,22 +89,27 @@ def _create_openai_clients(
     client builds its AsyncOpenAI in __init__ out of config.api_key and config.base_url,
     so assigning to the config later leaves the already-built client pointing elsewhere.
     """
-    credentials = {'api_key': settings.openai_api_key, 'base_url': settings.openai_base_url}
+    api_key = settings.openai_api_key
+    base_url = settings.openai_base_url
 
-    embedder_config = OpenAIEmbedderConfig(**credentials)
+    # Set after construction rather than passed in, because the model is read at call time
+    # and passing None would clobber the config's own default instead of falling back to it.
+    embedder_config = OpenAIEmbedderConfig(api_key=api_key, base_url=base_url)
     if settings.embedding_model_name is not None:
         embedder_config.embedding_model = settings.embedding_model_name
 
     return (
-        OpenAIClient(config=LLMConfig(model=settings.model_name, **credentials)),
+        OpenAIClient(
+            config=LLMConfig(api_key=api_key, base_url=base_url, model=settings.model_name)
+        ),
         OpenAIEmbedder(config=embedder_config),
         # No model override here. The reranker scores passages off logprobs on a one-token
         # completion, which is a different job from extraction — leave it on its default.
-        OpenAIRerankerClient(config=LLMConfig(**credentials)),
+        OpenAIRerankerClient(config=LLMConfig(api_key=api_key, base_url=base_url)),
     )
 
 
-def _create_graphiti_client(settings: ZepEnvDep) -> ZepGraphiti:
+def _create_graphiti_client(settings: Settings) -> ZepGraphiti:
     """Create a ZepGraphiti client based on the configured database backend."""
     llm_client, embedder, cross_encoder = _create_openai_clients(settings)
 
