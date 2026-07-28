@@ -1,31 +1,14 @@
-# The root Dockerfile only needs server/, so keep everything else out of the build
-# context. Smaller context, faster uploads, and no chance of a local .env sneaking in.
-.git
-.github
-.venv
-venv
-env
-**/.venv
-**/__pycache__
-**/*.pyc
-.pytest_cache
-.ruff_cache
-.mypy_cache
+# The root Dockerfile builds only server/, so exclude the whole repo and add that one
+# subtree back. An allow-list keeps the context minimal without needing an update every
+# time the repo grows a new top-level directory.
+*
+!server/
 
-# Never ship local secrets into an image layer.
-.env
-.env.*
-!.env.example
-
-tests
-examples
-images
-signatures
-spec
-mcp_server
-docs
-*.md
-!server/README.md
-docker-compose*.yml
-Dockerfile
-.dockerignore
+# Re-exclude what lives under server/ but never belongs in an image layer: a local
+# virtualenv (larger than the image itself), local secrets, and build droppings.
+server/.venv
+server/.env
+server/.env.*
+server/tests
+server/**/__pycache__
+server/**/*.pyc
