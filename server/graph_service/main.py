@@ -1,6 +1,6 @@
 import asyncio
 import logging
-from contextlib import asynccontextmanager
+from contextlib import asynccontextmanager, suppress
 
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
@@ -21,7 +21,7 @@ demo_state = DemoState(demo_config) if demo_config.enabled else None
 
 @asynccontextmanager
 async def lifespan(_: FastAPI):
-    logger.info('[startup] %s', 'DEMO mode enabled' if demo_config.enabled else 'normal mode')
+    logger.info('Starting Graphiti API with demo mode %s', 'on' if demo_config.enabled else 'off')
 
     settings = get_settings()
     if demo_state is not None and demo_config.model_name:
@@ -35,7 +35,10 @@ async def lifespan(_: FastAPI):
     yield
 
     if sweeper is not None:
+        # Await the cancellation so the sweeper's own cleanup runs before the loop closes.
         sweeper.cancel()
+        with suppress(asyncio.CancelledError):
+            await sweeper
     # Shutdown
     # No need to close Graphiti here, as it's handled per-request
 

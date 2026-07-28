@@ -47,6 +47,10 @@ LOCKED_ROUTES: tuple[tuple[str, str], ...] = (
 # Never gated: Render's health check has to answer even when a visitor is rate limited.
 UNGATED_PATHS = frozenset({'/healthcheck'})
 
+# Read routes whose group is optional in the request body. They default to searching every
+# group, so the session has to be pinned onto them even when the caller sends no group.
+SCOPED_SEARCH_PATHS = frozenset({'/search'})
+
 
 def _env_flag(name: str) -> bool:
     return os.environ.get(name, '').strip().lower() in {'true', '1', 'yes', 'on'}
@@ -95,7 +99,7 @@ class _Session:
 
 @dataclass
 class _RateLimiter:
-    """Fixed-window-free sliding window of request timestamps, keyed by client IP."""
+    """Sliding window of request timestamps, keyed by client IP."""
 
     per_minute: int
     _hits: dict[str, deque[float]] = field(default_factory=lambda: defaultdict(deque))
@@ -122,8 +126,9 @@ class DemoState:
         self.rate_limiter = _RateLimiter(config.rate_limit_per_minute)
 
     def touch(self, session_id: str) -> _Session:
-        session = self.sessions.setdefault(session_id, _Session(last_seen=time.monotonic()))
-        session.last_seen = time.monotonic()
+        now = time.monotonic()
+        session = self.sessions.setdefault(session_id, _Session(last_seen=now))
+        session.last_seen = now
         return session
 
     async def sweep_expired(self, settings: Settings) -> None:
@@ -191,7 +196,7 @@ class DemoModeMiddleware:
             session.episodes += requested
 
         scope = _scope_with_session(scope, session_id)
-        body = _force_group(body, session_id)
+        body = _force_group(body, session_id, path=path)
 
         await self.app(
             scope,
@@ -203,7 +208,10 @@ class DemoModeMiddleware:
 def _client_ip(scope) -> str:
     for name, value in scope.get('headers', []):
         if name == b'x-forwarded-for':
-            return value.decode('latin-1').split(',')[0].strip()
+            # Render appends the real client IP to whatever the caller sent, so only the
+            # rightmost hop is trustworthy. Reading the leftmost lets a visitor mint a
+            # fresh rate-limit bucket per request just by sending their own header.
+            return value.decode('latin-1').split(',')[-1].strip()
     client = scope.get('client')
     return client[0] if client else 'unknown'
 
@@ -267,14 +275,17 @@ def _count_messages(body: bytes) -> int:
     return len(messages) if isinstance(messages, list) else 1
 
 
-def _force_group(body: bytes, session_id: str) -> bytes:
+def _force_group(body: bytes, session_id: str, *, path: str) -> bytes:
     """Overwrite any caller-supplied group so a visitor can only touch their own graph."""
     payload = _load_json_object(body)
     if payload is None:
         return body
     if 'group_id' in payload:
         payload['group_id'] = session_id
-    if 'group_ids' in payload:
+    # An absent group_ids means "every group" to the search router, so it has to be
+    # pinned whether or not the caller sent it — otherwise omitting the key reads
+    # across every visitor's graph.
+    if 'group_ids' in payload or path in SCOPED_SEARCH_PATHS:
         payload['group_ids'] = [session_id]
     return json.dumps(payload).encode('utf-8')
 

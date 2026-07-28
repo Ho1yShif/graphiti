@@ -53,7 +53,7 @@ from `graphiti-api` over Render's private network.
    | Permission     | Used for                                                                           |
    | -------------- | ---------------------------------------------------------------------------------- |
    | **Responses**  | Write access on `/v1/responses` — extracting entities and facts from each episode. |
-   | **Embeddings** | Request access on /v1/embeddings` — embedding nodes, edges, and search queries.    |
+   | **Embeddings** | Write access on `/v1/embeddings` — embedding nodes, edges, and search queries.     |
 
    Everything else is set for you in `render.yaml`. The ones worth knowing about:
 
@@ -158,13 +158,17 @@ invalid value falls back to the default rather than to "unlimited".
 
 | Variable                        | Default        | Bounds                                                 |
 | ------------------------------- | -------------- | ------------------------------------------------------ |
-| `DEMO_RATE_LIMIT_PER_MINUTE`    | `10`           | Requests per minute, per IP.                           |
-| `DEMO_MAX_EPISODES_PER_SESSION` | `30`           | Episodes one visitor can ingest, total.                |
+| `DEMO_RATE_LIMIT_PER_MINUTE`    | `10`           | Requests per minute, per client IP.                    |
+| `DEMO_MAX_EPISODES_PER_SESSION` | `30`           | Episodes one session can ingest, total.                |
 | `DEMO_SESSION_TTL_MINUTES`      | `60`           | How long a session's graph survives before it's swept. |
 | `DEMO_MODEL_NAME`               | `gpt-4.1-nano` | Cheaper model used only on the demo path.              |
 
 Tripping a limit returns `429` with _"Demo limit reached — deploy your own Graphiti to keep
 going."_
+
+The episode cap is per session, and a visitor can always start a fresh session, so treat it as
+a guardrail against casual overuse rather than a spend ceiling. The per-IP rate limit is the
+in-app limit that actually binds; your OpenAI spend cap is the real backstop.
 
 **If you host a public demo URL yourself,** use a dedicated OpenAI key you can revoke, set a
 monthly spend cap and billing alerts in the OpenAI console, and keep the Render service handy
@@ -182,7 +186,9 @@ password>` on `graphiti-falkordb`, and set `FALKORDB_PASSWORD` to the same value
 `render.yaml`.
 
 **Local development.** Copy [`.env.example`](.env.example) to `.env`, fill in `OPENAI_API_KEY`,
-and run `docker compose up`.
+and run `docker compose --profile falkordb up`. That mirrors this Blueprint — the API on
+`http://localhost:8001`, FalkorDB beside it. A plain `docker compose up` runs the repo's other
+pairing, API plus Neo4j, on port 8000.
 
 ## Learn more
 

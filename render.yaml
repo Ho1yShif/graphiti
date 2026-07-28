@@ -19,8 +19,10 @@ projects:
             runtime: image
             region: oregon
             plan: standard
+            # Pinned, not :latest — every fork deploys this exact version, so an upstream
+            # bump can't break new deploys out from under you. Bump it deliberately.
             image:
-              url: docker.io/falkordb/falkordb:latest
+              url: docker.io/falkordb/falkordb:v4.20.1
             disk:
               name: falkordb-data
               mountPath: /var/lib/falkordb/data
@@ -29,6 +31,11 @@ projects:
               # Append-only file, so the graph survives a restart or redeploy.
               - key: REDIS_ARGS
                 value: --appendonly yes
+              # The image otherwise also serves the FalkorDB Browser UI on :3000. Nothing
+              # uses it here, and leaving it on gives Render's port scanner a second port
+              # to choose from. Off, so 6379 is the only thing listening.
+              - key: BROWSER
+                value: '0'
 
           - type: web
             name: graphiti-api

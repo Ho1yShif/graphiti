@@ -85,6 +85,14 @@ def test_group_ids_list_is_forced_to_the_visitor_session():
     assert response.json()['query'] == 'hi'
 
 
+def test_search_without_group_ids_is_still_scoped_to_the_session():
+    """Omitting group_ids means 'every group' downstream, so it must be pinned anyway."""
+    client = build_client()
+    response = client.post('/search', json={'query': 'hi'})
+
+    assert response.json()['group_ids'] == [session_id(response)]
+
+
 def test_group_id_in_the_path_is_rewritten():
     client = build_client()
     response = client.get('/episodes/someone-else', params={'last_n': 1})
@@ -139,6 +147,36 @@ def test_rate_limit_returns_429_not_500():
     response = client.post('/search', json={'query': 'a'})
     assert response.status_code == 429
     assert response.json()['detail'] == LIMIT_MESSAGE
+
+
+def forwarded_for(spoofed: str, real: str = '203.0.113.7') -> dict[str, str]:
+    """Render appends the real client IP to whatever the caller sent, so the header looks
+    like this by the time it reaches us: the caller's hop first, the trustworthy one last."""
+    return {'X-Forwarded-For': f'{spoofed}, {real}'}
+
+
+def test_a_spoofed_forwarded_for_cannot_buy_a_fresh_rate_limit_bucket():
+    client = build_client(rate_limit_per_minute=2)
+
+    for attempt in range(2):
+        response = client.post(
+            '/search', json={'query': 'a'}, headers=forwarded_for(f'10.0.0.{attempt}')
+        )
+        assert response.status_code == 200
+
+    # A brand new spoofed hop, but the same real client behind it.
+    response = client.post('/search', json={'query': 'a'}, headers=forwarded_for('10.0.0.99'))
+    assert response.status_code == 429
+
+
+def test_separate_clients_get_separate_rate_limit_buckets():
+    client = build_client(rate_limit_per_minute=1)
+
+    assert (
+        client.post('/search', json={'query': 'a'}, headers=forwarded_for('x')).status_code == 200
+    )
+    second = client.post('/search', json={'query': 'a'}, headers=forwarded_for('x', '198.51.100.4'))
+    assert second.status_code == 200
 
 
 def test_zero_disables_the_rate_limit():
