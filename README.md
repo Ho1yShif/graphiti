@@ -60,6 +60,7 @@ from `graphiti-api` over Render's private network.
    | Variable          | Default   | Notes                                                                             |
    | ----------------- | --------- | --------------------------------------------------------------------------------- |
    | `MODEL_NAME`      | `gpt-5.5` | Any OpenAI model id.                                                              |
+   | `GRAPHITI_VERSION` | `0.29.2` | The `graphiti-core` release the image is built against. Pinned so every fork deploys the same library; bump it to take a newer Graphiti. |
    | `SEMAPHORE_LIMIT` | `10`      | Concurrent LLM calls during ingestion. Deliberately below graphiti-core's default of 20, so a burst of episodes doesn't trip the rate limits on a fresh OpenAI key. Raise it once you know your account's limits. |
 
 3. Wait for both services to go live. `graphiti-api` passes its health check at `/healthcheck`.

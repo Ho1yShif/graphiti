@@ -60,6 +60,12 @@ projects:
               # the root Dockerfile picks up the graphiti-core FalkorDB extra.
               - key: INSTALL_FALKORDB
                 value: 'true'
+              # Pinned for the same reason the FalkorDB image is: left unset, the
+              # Dockerfile installs whatever graphiti-core is newest at build time, so two
+              # forks deployed a month apart run different libraries. Matches the version
+              # in this repo's pyproject.toml — bump both together.
+              - key: GRAPHITI_VERSION
+                value: 0.29.2
 
               - key: DB_BACKEND
                 value: falkordb
