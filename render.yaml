@@ -18,6 +18,9 @@ projects:
             name: graphiti-falkordb
             runtime: image
             region: oregon
+            # FalkorDB keeps the whole graph in RAM and only writes the append-only file
+            # to disk, so this plan is the real ceiling on graph size. Standard (2 GB) is
+            # the smallest that leaves room to grow; the disk below just has to outlast it.
             plan: standard
             # Pinned, not :latest — every fork deploys this exact version, so an upstream
             # bump can't break new deploys out from under you. Bump it deliberately.
@@ -41,7 +44,9 @@ projects:
             name: graphiti-api
             runtime: docker
             region: oregon
-            plan: standard
+            # The API idles near 100 MB and spends most of each request waiting on OpenAI,
+            # so it needs far less than the graph store does.
+            plan: starter
             dockerfilePath: ./Dockerfile
             dockerContext: .
             healthCheckPath: /healthcheck
