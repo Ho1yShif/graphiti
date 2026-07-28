@@ -47,6 +47,17 @@ from `graphiti-api` over Render's private network.
    |----------|---------------|-----------------|
    | `OPENAI_API_KEY` | Graphiti calls an LLM to pull entities and facts out of each episode, and to embed them for search. | [platform.openai.com/api-keys](https://platform.openai.com/api-keys) |
 
+   If you use a **restricted** OpenAI key, these three permissions are all it needs:
+
+   | Permission | Used for |
+   |------------|----------|
+   | **Responses** (`/v1/responses`) | Structured entity and fact extraction — the main path. |
+   | **Chat completions** (`/v1/chat/completions`) | Reranking search results, and the fallback for non-structured models. |
+   | **Embeddings** (`/v1/embeddings`) | Embedding nodes, edges, and search queries. |
+
+   Everything else — List models, Model capabilities, Text-to-speech, Realtime, Images,
+   Moderations — can stay off.
+
    Everything else is set for you in `render.yaml`. The ones worth knowing about:
 
    | Variable | Default | Notes |
