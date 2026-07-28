@@ -90,7 +90,10 @@ export GRAPHITI_URL=https://graphiti-api.onrender.com
 
 2. **Ingest the sample episode** that ships in this repo
    ([`examples/render/sample-episode.json`](examples/render/sample-episode.json)). It's a short
-   conversation where Alex leads the payments team, and then hands it to Priya:
+   conversation where Alex leads the payments team in May and hands it to Priya in July. The
+   messages carry explicit `timestamp` fields — that spread is what gives Graphiti something to
+   be temporal about. Omit them and every message is stamped with the time it arrived, so the
+   facts all land at once and nothing supersedes anything:
 
    ```bash
    curl -X POST $GRAPHITI_URL/messages \
@@ -110,23 +113,42 @@ export GRAPHITI_URL=https://graphiti-api.onrender.com
    ```bash
    curl -X POST $GRAPHITI_URL/search \
      -H 'Content-Type: application/json' \
-     -d '{"group_ids": ["demo"], "query": "who owns the ledger migration?", "max_facts": 5}'
+     -d '{"group_ids": ["demo"], "query": "who leads the payments team?", "max_facts": 10}'
    ```
 
-   You should get back facts naming Priya as the current owner — and, because Graphiti is
-   temporal rather than destructive, the earlier Alex fact with an `invalid_at` timestamp on
-   it. That pair is the whole point of the graph.
+   Among the results you'll find this pair, which is the whole point of the graph:
 
-5. **Clean up** when you're done experimenting:
+   ```
+   Alex leads the payments team at Acme.
+       valid_at: 2026-05-04T14:00:00+00:00   invalid_at: 2026-07-13T10:15:00+00:00
+   Priya now leads the payments team at Acme.
+       valid_at: 2026-07-13T10:15:00+00:00   invalid_at: None
+   ```
+
+   The old fact wasn't overwritten. It was closed off at the moment the handover happened, so
+   you can still ask who led the team in June. The two `valid_at`/`invalid_at` values come
+   straight from the message timestamps and are stable, but extraction is an LLM judgment
+   call — the exact wording and the result ordering will vary between runs.
+
+5. **Clean up** when you're done experimenting. On FalkorDB each `group_id` is a separate
+   graph, so deleting the group means deleting that graph. Open a shell on
+   `graphiti-falkordb` from the Render Dashboard and run:
 
    ```bash
-   curl -X DELETE $GRAPHITI_URL/group/demo
+   redis-cli GRAPH.DELETE demo
    ```
+
+   > The HTTP endpoints `DELETE /group/{group_id}` and `POST /clear` do **not** work on this
+   > deployment. Both return `{"success": true}` and delete nothing: they query the default
+   > graph, while the data lives in a graph named after the `group_id`. This is a
+   > [graphiti-core](https://github.com/getzep/graphiti) driver issue, not a misconfiguration
+   > here. Don't rely on them to erase a tenant's data.
 
 Full endpoint list at `$GRAPHITI_URL/docs` (FastAPI's generated OpenAPI docs).
 
 `group_id` partitions the graph. Use one per user, per tenant, or per agent, and search stays
-scoped to it.
+scoped to it. On FalkorDB each one is a distinct graph held in memory, so the instance plan —
+not the disk — is what bounds how many you can keep.
 
 ## Configuration notes
 
