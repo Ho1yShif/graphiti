@@ -116,19 +116,28 @@ export GRAPHITI_URL=https://graphiti-api.onrender.com
      -d '{"group_ids": ["demo"], "query": "who leads the payments team?", "max_facts": 10}'
    ```
 
-   Among the results you'll find this pair, which is the whole point of the graph:
+   Among the results you'll find both sides of the handover, each stamped with when it
+   became true:
 
    ```
    Alex leads the payments team at Acme.
-       valid_at: 2026-05-04T14:00:00+00:00   invalid_at: 2026-07-13T10:15:00+00:00
+       valid_at: 2026-05-04T14:00:00+00:00   invalid_at: None
    Priya now leads the payments team at Acme.
        valid_at: 2026-07-13T10:15:00+00:00   invalid_at: None
    ```
 
-   The old fact wasn't overwritten. It was closed off at the moment the handover happened, so
-   you can still ask who led the team in June. The two `valid_at`/`invalid_at` values come
-   straight from the message timestamps and are stable, but extraction is an LLM judgment
-   call — the exact wording and the result ordering will vary between runs.
+   That's the point of the graph. Alex's fact wasn't overwritten when Priya took over — both
+   are stored, each anchored to the message that asserted it, so you can ask who led the team
+   in June and get an answer. The `valid_at` values come straight from the message timestamps
+   and are reliable.
+
+   `invalid_at` is the other half: when Graphiti recognizes that a new fact contradicts an
+   older one, it closes the old one off at that moment, and you'd see
+   `invalid_at: 2026-07-13T10:15:00+00:00` on Alex's fact. Whether that fires is an LLM
+   judgment call made during ingestion, and on this three-message sample it happens on some
+   runs and not others. Treat it as opportunistic: real workloads give the model far more
+   signal than three messages do. The extracted wording, the capitalization, and the result
+   ordering vary between runs too.
 
 5. **Clean up** when you're done experimenting. On FalkorDB each `group_id` is a separate
    graph, so deleting the group means deleting that graph. Open a shell on
