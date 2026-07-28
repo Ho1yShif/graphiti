@@ -8,7 +8,7 @@ temporal knowledge-graph API your agents can write memories to and search over t
 ## What you get
 
 Graphiti turns a stream of conversations or events into a knowledge graph, and keeps track of
-*when* each fact was true. When something changes — someone switches teams, a deadline moves —
+_when_ each fact was true. When something changes — someone switches teams, a deadline moves —
 it doesn't overwrite the old fact, it invalidates it and records the new one. So an agent can
 ask what's true now, and also what was true last quarter.
 
@@ -43,28 +43,32 @@ from `graphiti-api` over Render's private network.
    `graphiti` project containing both services.
 2. Create the **`graphiti-secrets`** environment group when prompted and fill in:
 
-   | Variable | What it's for | Where to get it |
-   |----------|---------------|-----------------|
+   | Variable         | What it's for                                                                                       | Where to get it                                                      |
+   | ---------------- | --------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
    | `OPENAI_API_KEY` | Graphiti calls an LLM to pull entities and facts out of each episode, and to embed them for search. | [platform.openai.com/api-keys](https://platform.openai.com/api-keys) |
 
-   If you use a **restricted** OpenAI key, Graphiti only ever creates — it never reads
-   anything back — so every permission it needs is write-level:
+   If you use a **restricted** OpenAI key, this deployment needs exactly two of the
+   permissions under **Model capabilities**, both write:
 
-   | Permission | Level | Used for |
-   |------------|-------|----------|
-   | **Model capabilities** | `Request` | Covers `/v1/chat/completions` (reranking search results, and the fallback for non-structured models) and `/v1/embeddings` (embedding nodes, edges, and queries). |
-   | **Responses** | write | `/v1/responses` — structured entity and fact extraction, the main path. Set Model capabilities first, or this 403s. |
+   | Permission     | Used for                                                          |
+   | -------------- | ----------------------------------------------------------------- |
+   | **Responses**  | `/v1/responses` — extracting entities and facts from each episode. |
+   | **Embeddings** | `/v1/embeddings` — embedding nodes, edges, and search queries.     |
 
-   Everything else — List models, Text-to-speech, Realtime, Images, Moderations — stays
-   off. Read-only won't work for any of the above.
+   Leave **Chat completions**, **Text-to-speech**, **Realtime**, **Images**, and
+   **Moderations** off. Every Graphiti prompt requests a structured response, so the
+   OpenAI client always uses `/v1/responses` and never falls back to chat completions,
+   and the reranker that would use chat completions isn't part of the search path this
+   API exposes. Read-only is not enough for either permission — Graphiti only creates,
+   never reads back.
 
    Everything else is set for you in `render.yaml`. The ones worth knowing about:
 
-   | Variable | Default | Notes |
-   |----------|---------|-------|
-   | `MODEL_NAME` | `gpt-5.5` | Any OpenAI model id. |
-   | `SEMAPHORE_LIMIT` | `10` | Concurrent LLM calls during ingestion. Raise it on a bigger instance. |
-   | `DEMO` | `false` | See [Demo mode](#demo-mode). Leave it off unless you want a public showcase. |
+   | Variable          | Default   | Notes                                                                        |
+   | ----------------- | --------- | ---------------------------------------------------------------------------- |
+   | `MODEL_NAME`      | `gpt-5.5` | Any OpenAI model id.                                                         |
+   | `SEMAPHORE_LIMIT` | `10`      | Concurrent LLM calls during ingestion. Raise it on a bigger instance.        |
+   | `DEMO`            | `false`   | See [Demo mode](#demo-mode). Leave it off unless you want a public showcase. |
 
 3. Wait for both services to go live. `graphiti-api` passes its health check at `/healthcheck`.
 
@@ -142,13 +146,13 @@ locked-down configuration:
 
 **What a visitor can and can't do**
 
-| Capability | In demo mode |
-|------------|--------------|
-| Ingest episodes (`POST /messages`) | ✅ on, capped and scoped to their own session |
-| Search and read (`POST /search`, `GET /episodes/…`, `POST /get-memory`) | ✅ on, scoped to their own session |
-| Add an entity node (`POST /entity-node`) | ✅ on, scoped to their own session |
-| Delete an edge, episode, or group | ❌ 403 |
-| Wipe the graph (`POST /clear`) | ❌ 403 |
+| Capability                                                              | In demo mode                                  |
+| ----------------------------------------------------------------------- | --------------------------------------------- |
+| Ingest episodes (`POST /messages`)                                      | ✅ on, capped and scoped to their own session |
+| Search and read (`POST /search`, `GET /episodes/…`, `POST /get-memory`) | ✅ on, scoped to their own session            |
+| Add an entity node (`POST /entity-node`)                                | ✅ on, scoped to their own session            |
+| Delete an edge, episode, or group                                       | ❌ 403                                        |
+| Wipe the graph (`POST /clear`)                                          | ❌ 403                                        |
 
 **Session isolation.** Every visitor is assigned an unguessable UUID and pinned to it. Whatever
 `group_id` they send is overwritten with their own, so no visitor can read, write, or delete
@@ -159,15 +163,15 @@ accumulates.
 **Limits.** All are plain env vars. Set one to `0` to disable that dimension; an unset or
 invalid value falls back to the default rather than to "unlimited".
 
-| Variable | Default | Bounds |
-|----------|---------|--------|
-| `DEMO_RATE_LIMIT_PER_MINUTE` | `10` | Requests per minute, per IP. |
-| `DEMO_MAX_EPISODES_PER_SESSION` | `30` | Episodes one visitor can ingest, total. |
-| `DEMO_SESSION_TTL_MINUTES` | `60` | How long a session's graph survives before it's swept. |
-| `DEMO_MODEL_NAME` | `gpt-4.1-nano` | Cheaper model used only on the demo path. |
+| Variable                        | Default        | Bounds                                                 |
+| ------------------------------- | -------------- | ------------------------------------------------------ |
+| `DEMO_RATE_LIMIT_PER_MINUTE`    | `10`           | Requests per minute, per IP.                           |
+| `DEMO_MAX_EPISODES_PER_SESSION` | `30`           | Episodes one visitor can ingest, total.                |
+| `DEMO_SESSION_TTL_MINUTES`      | `60`           | How long a session's graph survives before it's swept. |
+| `DEMO_MODEL_NAME`               | `gpt-4.1-nano` | Cheaper model used only on the demo path.              |
 
-Tripping a limit returns `429` with *"Demo limit reached — deploy your own Graphiti to keep
-going."*
+Tripping a limit returns `429` with _"Demo limit reached — deploy your own Graphiti to keep
+going."_
 
 **If you host a public demo URL yourself,** use a dedicated OpenAI key you can revoke, set a
 monthly spend cap and billing alerts in the OpenAI console, and keep the Render service handy
