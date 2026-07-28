@@ -57,18 +57,17 @@ from `graphiti-api` over Render's private network.
 
    Everything else is set for you in `render.yaml`. The ones worth knowing about:
 
-   | Variable          | Default   | Notes                                                                        |
-   | ----------------- | --------- | ---------------------------------------------------------------------------- |
-   | `MODEL_NAME`      | `gpt-5.5` | Any OpenAI model id.                                                         |
-   | `SEMAPHORE_LIMIT` | `10`      | Concurrent LLM calls during ingestion. Raise it on a bigger instance.        |
-   | `DEMO`            | `false`   | See [Demo mode](#demo-mode). Leave it off unless you want a public showcase. |
+   | Variable          | Default   | Notes                                                                 |
+   | ----------------- | --------- | --------------------------------------------------------------------- |
+   | `MODEL_NAME`      | `gpt-5.5` | Any OpenAI model id.                                                  |
+   | `SEMAPHORE_LIMIT` | `10`      | Concurrent LLM calls during ingestion. Raise it on a bigger instance. |
 
 3. Wait for both services to go live. `graphiti-api` passes its health check at `/healthcheck`.
 
 > **This API has no authentication.** Anyone who knows your URL can write to your graph and
 > spend your OpenAI key. Before you point real traffic at it, put it behind your own auth,
-> an API gateway, or a private network — or run it with `DEMO=true`, which adds rate limits
-> and per-visitor isolation.
+> an API gateway, or a private network. In the meantime, use a dedicated OpenAI key you can
+> revoke and set a monthly spend cap in the OpenAI console — that cap is your backstop.
 
 ### Using the app
 
@@ -127,52 +126,6 @@ Full endpoint list at `$GRAPHITI_URL/docs` (FastAPI's generated OpenAPI docs).
 
 `group_id` partitions the graph. Use one per user, per tenant, or per agent, and search stays
 scoped to it.
-
-## Demo mode
-
-`DEMO=true` turns this deploy into a **public, no-signup showcase** running on your OpenAI key.
-It is **off by default** — a fresh deploy gives you the ordinary API described above, with no
-limits and no session rewriting.
-
-Turn it on only for a demo URL you're deliberately hosting for strangers. It selects one
-locked-down configuration:
-
-**What a visitor can and can't do**
-
-| Capability                                                              | In demo mode                                  |
-| ----------------------------------------------------------------------- | --------------------------------------------- |
-| Ingest episodes (`POST /messages`)                                      | ✅ on, capped and scoped to their own session |
-| Search and read (`POST /search`, `GET /episodes/…`, `POST /get-memory`) | ✅ on, scoped to their own session            |
-| Add an entity node (`POST /entity-node`)                                | ✅ on, scoped to their own session            |
-| Delete an edge, episode, or group                                       | ❌ 403                                        |
-| Wipe the graph (`POST /clear`)                                          | ❌ 403                                        |
-
-**Session isolation.** Every visitor is assigned an unguessable UUID and pinned to it. Whatever
-`group_id` they send is overwritten with their own, so no visitor can read, write, or delete
-another visitor's graph. Sessions are carried by an `HttpOnly` cookie, or by an `X-Demo-Session`
-header for API clients. Session graphs are deleted once they expire, so demo history never
-accumulates.
-
-**Limits.** All are plain env vars. Set one to `0` to disable that dimension; an unset or
-invalid value falls back to the default rather than to "unlimited".
-
-| Variable                        | Default        | Bounds                                                 |
-| ------------------------------- | -------------- | ------------------------------------------------------ |
-| `DEMO_RATE_LIMIT_PER_MINUTE`    | `10`           | Requests per minute, per client IP.                    |
-| `DEMO_MAX_EPISODES_PER_SESSION` | `30`           | Episodes one session can ingest, total.                |
-| `DEMO_SESSION_TTL_MINUTES`      | `60`           | How long a session's graph survives before it's swept. |
-| `DEMO_MODEL_NAME`               | `gpt-4.1-nano` | Cheaper model used only on the demo path.              |
-
-Tripping a limit returns `429` with _"Demo limit reached — deploy your own Graphiti to keep
-going."_
-
-The episode cap is per session, and a visitor can always start a fresh session, so treat it as
-a guardrail against casual overuse rather than a spend ceiling. The per-IP rate limit is the
-in-app limit that actually binds; your OpenAI spend cap is the real backstop.
-
-**If you host a public demo URL yourself,** use a dedicated OpenAI key you can revoke, set a
-monthly spend cap and billing alerts in the OpenAI console, and keep the Render service handy
-as a kill switch. The in-app limits bound normal use; the provider cap is your backstop.
 
 ## Configuration notes
 
