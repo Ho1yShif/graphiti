@@ -70,10 +70,6 @@ services:
     build:
       args:
         INSTALL_FALKORDB: "true"
-        # Same pin as render.yaml. Left unset, the Dockerfile installs whatever
-        # graphiti-core is newest at build time, so local dev would drift off the
-        # version Render runs — the thing pinning was meant to prevent.
-        GRAPHITI_VERSION: ${GRAPHITI_VERSION:-0.29.3}
       context: .
     profiles: ["falkordb"]
     ports:
