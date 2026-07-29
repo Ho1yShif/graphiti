@@ -100,11 +100,34 @@ def test_configured_key_accepts_the_right_bearer_token(build_app):
         # The right value one byte short: guards the compare_digest call against being
         # swapped for a prefix or startswith comparison.
         pytest.param({'Authorization': f'Bearer {SECRET[:-1]}'}, id='truncated-key'),
+        # Raw bytes, because httpx refuses to encode a non-ASCII str header: Starlette
+        # decodes headers as latin-1, so this reaches the dependency as a non-ASCII str,
+        # which compare_digest refuses to compare as str. It has to be rejected, not
+        # turned into a 500 by anyone who sends a stray high byte.
+        pytest.param({b'Authorization': b'Bearer \xff'}, id='non-ascii-token'),
     ],
 )
 def test_configured_key_rejects_everything_else(build_app, headers):
     app = build_app(SECRET)
     assert _search(app, headers).status_code == 401
+
+
+def test_a_non_ascii_configured_key_still_only_rejects(build_app):
+    """A key with an accent in it must not take the whole service down.
+
+    Render generates an ASCII key, but rotating it is a manual edit in the Dashboard and
+    nothing there rejects a passphrase. Compared as str, such a key raised TypeError on
+    every request and returned 500 — so the service answered nothing at all, rather than
+    rejecting the requests that were wrong.
+
+    A non-ASCII key can't be relied on to authenticate either, whatever the client sends:
+    header bytes are latin-1 on the wire and clients encode them inconsistently, so the
+    two byte sequences need not meet. That is why auth.py's docstring says to keep the key
+    ASCII. What is guaranteed, and asserted here, is a clean 401 instead of a crash.
+    """
+    app = build_app('clé-secrète')
+    assert _search(app, {'Authorization': 'Bearer wrong-key'}).status_code == 401
+    assert _search(app, {b'Authorization': 'Bearer clé-secrète'.encode()}).status_code == 401
 
 
 def test_rejection_names_the_scheme_to_retry_with(build_app):

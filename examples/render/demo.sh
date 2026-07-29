@@ -66,7 +66,11 @@ command -v jq >/dev/null || echo 'demo.sh: jq not found — brew install jq'
 # call also means exporting it after sourcing takes effect without re-sourcing.
 _graphiti_curl() {
   if [ -n "$GRAPHITI_API_KEY" ]; then
-    curl -H "Authorization: Bearer $GRAPHITI_API_KEY" "$@"
+    # -H @- reads the header from stdin rather than taking it as an argument, so the key
+    # never lands in this process's argv, where any other user on the machine could read
+    # it out of `ps`. Needs curl 7.55 (2017) or newer; macOS and current distros are well
+    # past that. No helper passes a request body on stdin, so stdin is free to use here.
+    printf 'Authorization: Bearer %s\n' "$GRAPHITI_API_KEY" | curl -H @- "$@"
   else
     curl "$@"
   fi

@@ -43,8 +43,9 @@ class Settings(BaseSettings):
     # Only these two backends are wired up in zep_graphiti, so a typo should be a startup
     # error naming the valid values, not a silent fall-through to the Neo4j branch.
     db_backend: Literal['neo4j', 'falkordb'] = 'neo4j'
-    # Bearer token for the graph endpoints. Render generates one per deploy; unset (as in
-    # local compose) switches auth off entirely. See auth.py.
+    # Bearer token for the graph endpoints. Render generates one when it first creates the
+    # variable, and leaves it alone afterwards; unset (as in local compose) switches auth
+    # off entirely. See auth.py.
     graphiti_api_key: OptionalStr = None
 
     model_config = SettingsConfigDict(env_file='.env', extra='ignore')
