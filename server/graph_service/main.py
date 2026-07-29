@@ -21,6 +21,14 @@ async def lifespan(_: FastAPI):
 _AUTH = [Depends(require_api_key)]
 _OPENAPI_PATH = '/openapi.json'
 
+
+# The URL the docs pages fetch the schema from is built the way FastAPI builds it for its
+# own built-ins: prefixed with root_path, so the pages keep working if this app is ever
+# served under a path prefix by a proxy. Nothing does that today.
+def _openapi_url(request: Request) -> str:
+    return request.scope.get('root_path', '').rstrip('/') + _OPENAPI_PATH
+
+
 # FastAPI mounts /docs, /redoc and /openapi.json itself, and mounts them public. They
 # are switched off here and re-declared below behind _AUTH instead, so the schema of
 # every route is not readable by anyone who finds the URL. Turning them off at the
@@ -63,13 +71,6 @@ async def healthcheck():
 @app.get(_OPENAPI_PATH, include_in_schema=False, dependencies=_AUTH)
 async def openapi():
     return JSONResponse(app.openapi())
-
-
-# The URL the docs pages fetch the schema from is built the way FastAPI builds it for its
-# own built-ins: prefixed with root_path, so the pages keep working if this app is ever
-# served under a path prefix by a proxy. Nothing does that today.
-def _openapi_url(request: Request) -> str:
-    return request.scope.get('root_path', '').rstrip('/') + _OPENAPI_PATH
 
 
 @app.get('/docs', include_in_schema=False, dependencies=_AUTH)

@@ -1,13 +1,12 @@
 """Bearer-token auth for the graph endpoints.
 
-The API writes to a shared graph and spends the deployment's OpenAI key on every
-episode it ingests, so on Render it ships closed: render.yaml declares GRAPHITI_API_KEY
-with generateValue, and Render mints a random value when it first creates the variable.
-That value then persists — it is not re-rolled on later deploys, so rotating it is a
-deliberate edit in the Dashboard rather than something that happens on its own.
+The API writes to a shared graph and spends the deployment's OpenAI key on every episode
+it ingests, so on Render it ships closed: render.yaml declares GRAPHITI_API_KEY with
+generateValue, and Render mints a random value when it first creates the variable. See
+that file for how the key is generated and rotated.
 
-Auth is still switchable, because the same code has to run where there is nothing to
-protect. Leave GRAPHITI_API_KEY unset — as `docker compose up` does — and the dependency waves
+Auth is switchable, because the same code has to run where there is nothing to protect.
+Leave GRAPHITI_API_KEY unset — as `docker compose up` does — and the dependency waves
 every request through, so local development needs no header. Set it and every graph
 endpoint requires one. There is no third state: a key that is present but blank is
 treated as unset by the OptionalStr validator in config, not as a key equal to ''.
@@ -50,12 +49,10 @@ async def require_api_key(
     # whatever its first differing byte is, and can't be recovered a character at a
     # time. It needs both sides to exist, hence the guard.
     #
-    # Compared as bytes, not str: compare_digest rejects str arguments that aren't
-    # ASCII-only, and both sides can be. Starlette decodes headers as latin-1, so a raw
-    # high byte in the header arrives as a non-ASCII str, and nothing stops an operator
-    # from rotating GRAPHITI_API_KEY to a value with an accent in it. As str, either case
-    # raised TypeError inside this dependency and returned 500 — for the configured-key
-    # case, on every request including the ones sending the right key.
+    # Compared as bytes, not str: compare_digest raises TypeError on a str that isn't
+    # ASCII-only, and either side can be one — Starlette decodes headers as latin-1, and
+    # nothing stops an operator rotating GRAPHITI_API_KEY to a value with an accent in
+    # it. Encoding first turns both cases into a 401 rather than a 500.
     if credentials is None or not secrets.compare_digest(
         credentials.credentials.encode(), settings.graphiti_api_key.encode()
     ):

@@ -76,10 +76,15 @@ _graphiti_curl() {
   fi
 }
 
-# Turn a 401 into the fix, rather than leaving the caller to read a bare status code.
-# Two callers reach this: ingest, which sees the status, and _graphiti_facts, which sees
-# the message — hence the split below rather than one function taking a status.
-_graphiti_auth_hint() {
+# $1 is an HTTP status. Returns 0 unless it is a 401, in which case it turns that into
+# the fix on stderr and returns 1 — so a caller can end with this and let it decide the
+# exit status, or use it as `|| return 1` mid-function.
+#
+# Keyed off the status rather than the message body: the wording of the API's 401 is
+# auth.py's to change, and matching on it would leave this silently falling through to
+# the generic "refused the request" branch the day it did.
+_graphiti_check_auth() {
+  [ "$1" = 401 ] || return 0
   if [ -n "$GRAPHITI_API_KEY" ]; then
     echo '  401 — GRAPHITI_API_KEY is set but rejected. Re-copy it from the Render' >&2
     echo '  Dashboard: graphiti-api -> Environment -> GRAPHITI_API_KEY' >&2
@@ -88,13 +93,6 @@ _graphiti_auth_hint() {
     echo '    export GRAPHITI_API_KEY=...   # graphiti-api -> Environment' >&2
   fi
   return 1
-}
-
-# $1 is an HTTP status. Returns 1 and explains if it is a 401, 0 otherwise, so a caller
-# can end with this and let it decide the exit status.
-_graphiti_check_auth() {
-  [ "$1" = 401 ] || return 0
-  _graphiti_auth_hint
 }
 
 # Where the sample episode lives, resolved once at source time so the helpers
@@ -144,9 +142,11 @@ ingest() {
     --data-binary @"$tmp")
   http_code="${metrics% *}"
   printf '  ingest → HTTP %s in %ss (group %s)\n' "$http_code" "${metrics#* }" "$GRAPHITI_GROUP"
-  # A 202 body is just an ack, so only surface it when something went wrong.
+  # A 202 body is just an ack, so only surface it when something went wrong — and not
+  # on a 401 either, where the hint below already says everything the body would, with
+  # the fix attached.
   case "$http_code" in
-    2*) ;;
+    2*|401) ;;
     *) jq -c . "$body" 2>/dev/null || cat "$body" ;;
   esac
   rm -f "$tmp" "$body"
@@ -154,20 +154,14 @@ ingest() {
   _graphiti_check_auth "$http_code"
 }
 
-# POST /search and emit the raw JSON. $1 query, $2 max_facts (default 10).
+# POST /search and emit the response body, then the HTTP status on a final line.
+# $1 query, $2 max_facts (default 10). Only _graphiti_facts calls this — it splits the
+# two apart — because the status is what tells a 401 from a service that is simply down.
 _graphiti_search() {
-  _graphiti_curl -s -X POST "$GRAPHITI_URL/search" \
+  _graphiti_curl -s -w '\n%{http_code}' -X POST "$GRAPHITI_URL/search" \
     -H 'Content-Type: application/json' \
     -d "$(jq -nc --arg g "$GRAPHITI_GROUP" --arg q "$1" --argjson n "${2:-10}" \
           '{group_ids: [$g], query: $q, max_facts: $n}')"
-}
-
-# How many facts the current group returns for $1, or empty if the service did
-# not answer with usable JSON. Callers must handle empty: a cold start or a 502
-# yields no output, and feeding that to [ ] produces "integer expression
-# expected" instead of anything a reader can act on.
-_graphiti_count() {
-  _graphiti_search "$1" 50 | jq -e '.facts | length' 2>/dev/null
 }
 
 # Emit the search response only if it is JSON with a facts array, so callers can
@@ -175,25 +169,39 @@ _graphiti_count() {
 # $1 query, $2 max_facts. Diagnoses its own failure on stderr, so callers only
 # have to propagate the non-zero status.
 _graphiti_facts() {
-  local json detail
-  json=$(_graphiti_search "$1" "${2:-10}")
+  local response json http_code detail
+  response=$(_graphiti_search "$1" "${2:-10}")
+  # Both splits anchor on the *last* newline, so a pretty-printed body survives intact:
+  # ## takes the longest prefix up to it, % the shortest suffix from it.
+  http_code="${response##*$'\n'}"
+  json="${response%$'\n'*}"
   if printf '%s' "$json" | jq -e 'has("facts")' >/dev/null 2>&1; then
     printf '%s' "$json"
     return 0
   fi
-  # FastAPI reports every error as {"detail": ...}, so a detail field means the service
-  # answered and rejected us — quoting it beats guessing the service is down. The auth
-  # case gets the fix rather than the message, since it is the one users will hit.
+  _graphiti_check_auth "$http_code" || return 1
+  # FastAPI reports every other error as {"detail": ...}, so a detail field means the
+  # service answered and rejected us — quoting it beats guessing the service is down.
   detail=$(printf '%s' "$json" | jq -r 'if (.detail|type) == "string" then .detail else empty end' 2>/dev/null)
-  case "$detail" in
-    '')
-      echo "  no usable response from $GRAPHITI_URL/search — is the service up? try: health" >&2 ;;
-    *'API key'*)
-      _graphiti_auth_hint ;;
-    *)
-      echo "  $GRAPHITI_URL/search refused the request: $detail" >&2 ;;
-  esac
+  if [ -z "$detail" ]; then
+    echo "  no usable response from $GRAPHITI_URL/search — is the service up? try: health" >&2
+  else
+    echo "  $GRAPHITI_URL/search refused the request: $detail" >&2
+  fi
   return 1
+}
+
+# How many facts the current group returns for $1, or empty if the service did
+# not answer with usable JSON. Callers must handle empty: a cold start or a 502
+# yields no output, and feeding that to [ ] produces "integer expression
+# expected" instead of anything a reader can act on.
+#
+# The quiet variant of _graphiti_facts: the poll loop in watch_ingest tolerates a
+# dropped request by carrying the last count forward, so a diagnostic on every blip
+# would be noise scrolling past a progress display. The loop's caller has already
+# had one from the baseline call.
+_graphiti_count() {
+  _graphiti_facts "$1" 50 2>/dev/null | jq -e '.facts | length' 2>/dev/null
 }
 
 # The current answer, on one line, rendered as the graph edge it came from so it
@@ -279,7 +287,7 @@ watch_ingest() {
   local t0 last count stable=0 elapsed baseline json
   t0=$(date +%s)
 
-  # Via _graphiti_facts rather than _graphiti_count, which swallows the response body:
+  # Via _graphiti_facts rather than _graphiti_count, which is deliberately silent:
   # without a baseline there is no way to tell new facts from old ones, so this is the
   # point to stop and say why — an unset key or a wrong one shows up here as a 401 with
   # the fix attached, instead of as three minutes of polling that never moves.
