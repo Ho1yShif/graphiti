@@ -56,16 +56,20 @@ unset _graphiti_sourced
 
 command -v jq >/dev/null || echo 'demo.sh: jq not found — brew install jq'
 
-# Populate _GRAPHITI_AUTH with curl's -H flag and the bearer header, or leave it empty when
-# no key is set so a local no-auth stack still works. Recomputed per call rather than once
-# at source time, so exporting the key afterwards takes effect without re-sourcing.
+# curl with the bearer header attached, or plain curl when no key is set so a local
+# no-auth stack still works. Every call to the API goes through this, so the header is
+# built in exactly one place and a new helper cannot forget it.
 #
-# An array, not a string: the header value contains a space, and an unquoted string would
-# word-split into two broken arguments. "${_GRAPHITI_AUTH[@]}" expands to nothing at all
-# when the array is empty, which is what makes the no-key case work.
-_graphiti_auth() {
-  _GRAPHITI_AUTH=()
-  [ -n "$GRAPHITI_API_KEY" ] && _GRAPHITI_AUTH=(-H "Authorization: Bearer $GRAPHITI_API_KEY")
+# Two branches rather than one call with an interpolated header argument: the value
+# contains a space, so an empty-when-unset variable would either word-split into two
+# broken arguments or, quoted, send a literal empty header. Reading GRAPHITI_API_KEY per
+# call also means exporting it after sourcing takes effect without re-sourcing.
+_graphiti_curl() {
+  if [ -n "$GRAPHITI_API_KEY" ]; then
+    curl -H "Authorization: Bearer $GRAPHITI_API_KEY" "$@"
+  else
+    curl "$@"
+  fi
 }
 
 # Turn a 401 into the fix, rather than leaving the caller to read a bare status code.
@@ -130,10 +134,8 @@ ingest() {
   tmp=$(mktemp "${TMPDIR:-/tmp}/graphiti-episode.XXXXXX") || return 1
   body=$(mktemp "${TMPDIR:-/tmp}/graphiti-ingest.XXXXXX") || { rm -f "$tmp"; return 1; }
   jq --arg g "$GRAPHITI_GROUP" '.group_id = $g' "$file" > "$tmp" || { rm -f "$tmp" "$body"; return 1; }
-  _graphiti_auth
-  metrics=$(curl -sS -o "$body" -w '%{http_code} %{time_total}' \
+  metrics=$(_graphiti_curl -sS -o "$body" -w '%{http_code} %{time_total}' \
     -X POST "$GRAPHITI_URL/messages" \
-    "${_GRAPHITI_AUTH[@]}" \
     -H 'Content-Type: application/json' \
     --data-binary @"$tmp")
   http_code="${metrics% *}"
@@ -150,9 +152,7 @@ ingest() {
 
 # POST /search and emit the raw JSON. $1 query, $2 max_facts (default 10).
 _graphiti_search() {
-  _graphiti_auth
-  curl -s -X POST "$GRAPHITI_URL/search" \
-    "${_GRAPHITI_AUTH[@]}" \
+  _graphiti_curl -s -X POST "$GRAPHITI_URL/search" \
     -H 'Content-Type: application/json' \
     -d "$(jq -nc --arg g "$GRAPHITI_GROUP" --arg q "$1" --argjson n "${2:-10}" \
           '{group_ids: [$g], query: $q, max_facts: $n}')"

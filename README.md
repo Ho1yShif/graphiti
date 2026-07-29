@@ -80,17 +80,23 @@ from `graphiti-api` over Render's private network.
 
 3. Wait for both services to go live. `graphiti-api` passes its health check at `/healthcheck`.
 
-4. **Copy your API key.** Every endpoint except `/healthcheck` requires it. Render generated
-   one for you at deploy time, so there's nothing to paste in — open `graphiti-api` →
-   **Environment** in the Dashboard and copy `GRAPHITI_API_KEY`. Send it as a bearer token:
+4. **Copy your API key.** Every endpoint except `/healthcheck` requires it — including
+   `/docs`, `/redoc` and `/openapi.json`, which describe every route and so aren't left open.
+   Render generated a key for you when it created the service, so there's nothing to paste
+   in: open `graphiti-api` → **Environment** in the Dashboard and copy `GRAPHITI_API_KEY`.
+   Send it as a bearer token:
 
    ```
    Authorization: Bearer <GRAPHITI_API_KEY>
    ```
 
-   Rotate it by editing that value; the change takes effect on the restart Render triggers
-   automatically. `/docs` has an **Authorize** button that takes the same value, so you can
-   try endpoints from the browser.
+   The key is generated once and then left alone, so it keeps working across deploys and
+   rotating it is up to you: edit the value in the Dashboard, and the change takes effect on
+   the restart Render triggers automatically.
+
+   Because a browser can't attach that header to a plain navigation, `/docs` isn't clickable
+   on a deployment that has a key set. Locally it is — `docker compose` sets no key, so auth
+   is off and Swagger UI works as usual (see [Configuration notes](#configuration-notes)).
 
 > **This key is the only thing in front of your graph.** It's a single shared secret with no
 > scopes, no per-user identity, and no rate limiting — enough to keep a stranger who finds your
@@ -233,8 +239,9 @@ pairing, API plus Neo4j, on port 8000.
 
 Compose sets no `GRAPHITI_API_KEY`, so **auth is off locally** and the curl examples above work
 without the header — the stack isn't reachable from the internet, and a key you have to look up
-on every restart is friction with nothing to protect. Set `GRAPHITI_API_KEY` in `.env` to
-exercise the authenticated path before you deploy.
+on every restart is friction with nothing to protect. This is also where the browsable API docs
+live: `http://localhost:8001/docs` needs no key, so Swagger UI's **Try it out** works normally.
+Set `GRAPHITI_API_KEY` in `.env` to exercise the authenticated path before you deploy.
 
 ## Learn more
 

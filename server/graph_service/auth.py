@@ -1,8 +1,10 @@
 """Bearer-token auth for the graph endpoints.
 
 The API writes to a shared graph and spends the deployment's OpenAI key on every
-episode it ingests, so on Render it ships closed: render.yaml declares GRAPHITI_API_KEY with
-generateValue, and Render mints a random value at deploy time.
+episode it ingests, so on Render it ships closed: render.yaml declares GRAPHITI_API_KEY
+with generateValue, and Render mints a random value when it first creates the variable.
+That value then persists — it is not re-rolled on later deploys, so rotating it is a
+deliberate edit in the Dashboard rather than something that happens on its own.
 
 Auth is still switchable, because the same code has to run where there is nothing to
 protect. Leave GRAPHITI_API_KEY unset — as `docker compose up` does — and the dependency waves

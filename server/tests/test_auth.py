@@ -1,10 +1,11 @@
 """Auth tests for the graph endpoints.
 
 Unlike tests/test_live_falkordb_int.py these need no OpenAI key and no database, so
-they run in the default `make test`. Requests that pass auth are expected to fail
-afterwards with a 500: the app is built without its lifespan, so no Graphiti client
-exists and the handler raises. That 500 is the assertion — it means the request got
-past require_api_key, which is the only thing under test here.
+they run in the default `make test`. Nothing here asserts a successful response: the
+app is built without its lifespan, so a request that gets past auth reaches a handler
+with no Graphiti client and fails. What is asserted is only whether require_api_key
+let the request through — see _assert_passed_auth, which deliberately does not care
+which error the handler then raised.
 
 The real graph_service.main is reloaded per case rather than a stand-in app being
 assembled, because the wiring in main is what these guard: the likeliest regression
@@ -23,19 +24,10 @@ from graph_service.auth import require_api_key
 
 SECRET = 'test-api-key-6Yp2Qk'
 
-# Prefixes of every route that touches the graph. Anything matching one of these must
-# carry the auth dependency; see test_every_graph_route_is_protected.
-GRAPH_PREFIXES = (
-    '/search',
-    '/messages',
-    # Singular, so it covers both DELETE /episode/{uuid} and GET /episodes/{group_id}.
-    '/episode',
-    '/entity-edge',
-    '/entity-node',
-    '/group',
-    '/clear',
-    '/get-memory',
-)
+# The allowlist the app is held to: every other route must carry the auth dependency.
+# An allowlist rather than a list of protected prefixes, so a route added under a name
+# nobody predicted is a failure by default instead of going unnoticed.
+PUBLIC_PATHS = {'/healthcheck'}
 
 
 @pytest.fixture
@@ -66,6 +58,17 @@ def _search(app, headers=None):
     )
 
 
+def _assert_passed_auth(response):
+    """Assert only that require_api_key let the request through.
+
+    Not `== 500`: what the handler does next is not this file's business, and pinning
+    the exact failure would make these tests fail the day the app gains a lifespan in
+    the fixture or returns a 503 instead. 401 is the one status that means auth itself
+    rejected the request.
+    """
+    assert response.status_code != 401, response.text
+
+
 @pytest.mark.parametrize(
     'graphiti_api_key', [None, '', '   '], ids=['unset', 'blank', 'whitespace']
 )
@@ -77,12 +80,12 @@ def test_auth_is_off_when_no_key_is_configured(build_app, graphiti_api_key):
     that every unauthenticated request would then have to guess.
     """
     app = build_app(graphiti_api_key)
-    assert _search(app).status_code == 500
+    _assert_passed_auth(_search(app))
 
 
 def test_configured_key_accepts_the_right_bearer_token(build_app):
     app = build_app(SECRET)
-    assert _search(app, {'Authorization': f'Bearer {SECRET}'}).status_code == 500
+    _assert_passed_auth(_search(app, {'Authorization': f'Bearer {SECRET}'}))
 
 
 @pytest.mark.parametrize(
@@ -126,37 +129,45 @@ def _is_protected(route) -> bool:
 
     Identity, not a name comparison: a same-named dependency from somewhere else would
     otherwise satisfy the check. Anything that is not an APIRoute has no dependant at
-    all and counts as unprotected — a graph path served by a Mount or a WebSocketRoute
-    is exactly the case this test must not wave through.
+    all and counts as unprotected — a path served by a Mount or a WebSocketRoute is
+    exactly the case this test must not wave through.
     """
     if not isinstance(route, APIRoute):
         return False
     return any(dependency.call is require_api_key for dependency in route.dependant.dependencies)
 
 
-def test_every_graph_route_is_protected(build_app):
-    """A router included without the dependency would silently expose the graph."""
+def test_every_route_but_healthcheck_is_protected(build_app):
+    """The whole surface, not a list of prefixes someone has to remember to extend.
+
+    A router included without the dependency, or a new public endpoint added by
+    accident, fails here. Adding a route to PUBLIC_PATHS is then a deliberate edit to
+    a set named for what it means.
+    """
     app = build_app(SECRET)
     unprotected = {
         route.path
         for route in app.routes
-        if route.path.startswith(GRAPH_PREFIXES) and not _is_protected(route)
+        if route.path not in PUBLIC_PATHS and not _is_protected(route)
     }
-    assert not unprotected, f'graph routes missing auth: {sorted(unprotected)}'
+    assert not unprotected, f'routes missing auth: {sorted(unprotected)}'
 
 
-def test_the_graph_prefix_list_has_not_drifted(build_app):
-    """Guards the test above: a new route under a new prefix would otherwise be ignored.
+@pytest.mark.parametrize('path', ['/openapi.json', '/docs', '/redoc'])
+def test_the_api_docs_are_not_public(build_app, path):
+    """FastAPI serves these to anyone by default, and they describe every route.
 
-    Every route is either a graph route, one of the public endpoints, or a docs route
-    FastAPI adds itself. A path that is none of those means GRAPH_PREFIXES needs a new
-    entry and the coverage check above is no longer complete.
+    main.py switches the built-ins off and re-declares them behind auth; if that ever
+    regresses the schema becomes readable by anyone holding the URL.
     """
-    public = {'/healthcheck', '/openapi.json', '/docs', '/docs/oauth2-redirect', '/redoc'}
     app = build_app(SECRET)
-    unclassified = {
-        route.path
-        for route in app.routes
-        if route.path not in public and not route.path.startswith(GRAPH_PREFIXES)
-    }
-    assert not unclassified, f'routes matching neither GRAPH_PREFIXES nor public: {unclassified}'
+    client = TestClient(app, raise_server_exceptions=False)
+    assert client.get(path).status_code == 401
+    assert client.get(path, headers={'Authorization': f'Bearer {SECRET}'}).status_code == 200
+
+
+@pytest.mark.parametrize('path', ['/openapi.json', '/docs', '/redoc'])
+def test_the_api_docs_stay_browsable_with_no_key_set(build_app, path):
+    """Local compose sets no key, and losing the browser docs there would be a real cost."""
+    app = build_app(None)
+    assert TestClient(app).get(path).status_code == 200
