@@ -92,7 +92,10 @@ from `graphiti-api` over Render's private network.
 
    The key is generated once and then left alone, so it keeps working across deploys and
    rotating it is up to you: edit the value in the Dashboard, and the change takes effect on
-   the restart Render triggers automatically.
+   the restart Render triggers automatically. Keep the replacement to ASCII, as the generated
+   one is — HTTP sends header values as latin-1, and clients disagree about how to encode
+   anything outside it, so a key with an accent or an emoji in it may reject every request
+   including yours.
 
    Because a browser can't attach that header to a plain navigation, `/docs` isn't clickable
    on a deployment that has a key set. Locally it is — `docker compose` sets no key, so auth
