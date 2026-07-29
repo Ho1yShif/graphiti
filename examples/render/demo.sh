@@ -2,7 +2,12 @@
 # Demo helpers for a deployed Graphiti API. Source it, don't run it:
 #
 #   export GRAPHITI_URL=https://your-service.onrender.com
+#   export GRAPHITI_API_KEY=...   # graphiti-api -> Environment in the Render Dashboard
 #   source examples/render/demo.sh
+#
+# GRAPHITI_API_KEY is optional only because a local `docker compose` stack sets no key and
+# so requires no header. Against anything deployed it is required, and leaving it out gets
+# you 401s from every helper except health.
 #
 # Then:
 #   use_group take1         point everything at a group, one take per group
@@ -51,6 +56,32 @@ unset _graphiti_sourced
 
 command -v jq >/dev/null || echo 'demo.sh: jq not found — brew install jq'
 
+# Populate _GRAPHITI_AUTH with curl's -H flag and the bearer header, or leave it empty when
+# no key is set so a local no-auth stack still works. Recomputed per call rather than once
+# at source time, so exporting the key afterwards takes effect without re-sourcing.
+#
+# An array, not a string: the header value contains a space, and an unquoted string would
+# word-split into two broken arguments. "${_GRAPHITI_AUTH[@]}" expands to nothing at all
+# when the array is empty, which is what makes the no-key case work.
+_graphiti_auth() {
+  _GRAPHITI_AUTH=()
+  [ -n "$GRAPHITI_API_KEY" ] && _GRAPHITI_AUTH=(-H "Authorization: Bearer $GRAPHITI_API_KEY")
+}
+
+# Turn the 401 that a missing or stale key produces into the fix, rather than leaving the
+# caller to read a bare status code. $1 is the HTTP status.
+_graphiti_check_auth() {
+  [ "$1" = 401 ] || return 0
+  if [ -n "$GRAPHITI_API_KEY" ]; then
+    echo '  401 — GRAPHITI_API_KEY is set but rejected. Re-copy it from the Render' >&2
+    echo '  Dashboard: graphiti-api -> Environment -> GRAPHITI_API_KEY' >&2
+  else
+    echo '  401 — this deployment requires a key, and GRAPHITI_API_KEY is unset:' >&2
+    echo '    export GRAPHITI_API_KEY=...   # graphiti-api -> Environment' >&2
+  fi
+  return 1
+}
+
 # Where the sample episode lives, resolved once at source time so the helpers
 # work from any directory afterwards.
 GRAPHITI_EPISODE="${GRAPHITI_EPISODE:-$(cd "$(dirname "${BASH_SOURCE[0]:-$0}")" && pwd)/sample-episode.json}"
@@ -83,29 +114,37 @@ health() {
 # --data-binary rather than -d: -d strips newlines, which is harmless for JSON
 # but makes the payload unreadable if you ever need to echo it back.
 ingest() {
-  local file="${1:-$GRAPHITI_EPISODE}" tmp body code
+  local file="${1:-$GRAPHITI_EPISODE}" tmp body code http_code
   [ -f "$file" ] || { echo "  no episode file at $file" >&2; return 1; }
   # An explicit XXXXXX template: macOS accepts a bare prefix after -t, GNU and
   # BusyBox mktemp reject it, so -t alone would break the helper on Linux.
   tmp=$(mktemp "${TMPDIR:-/tmp}/graphiti-episode.XXXXXX") || return 1
   body=$(mktemp "${TMPDIR:-/tmp}/graphiti-ingest.XXXXXX") || { rm -f "$tmp"; return 1; }
   jq --arg g "$GRAPHITI_GROUP" '.group_id = $g' "$file" > "$tmp" || { rm -f "$tmp" "$body"; return 1; }
+  _graphiti_auth
   code=$(curl -sS -o "$body" -w '%{http_code} %{time_total}' \
     -X POST "$GRAPHITI_URL/messages" \
+    "${_GRAPHITI_AUTH[@]}" \
     -H 'Content-Type: application/json' \
     --data-binary @"$tmp")
-  printf '  ingest → HTTP %s in %ss (group %s)\n' "${code% *}" "${code#* }" "$GRAPHITI_GROUP"
+  http_code="${code% *}"
+  printf '  ingest → HTTP %s in %ss (group %s)\n' "$http_code" "${code#* }" "$GRAPHITI_GROUP"
   # A 202 body is just an ack, so only surface it when something went wrong.
-  case "${code% *}" in
+  case "$http_code" in
     2*) ;;
     *) jq -c . "$body" 2>/dev/null || cat "$body" ;;
   esac
   rm -f "$tmp" "$body"
+  # Last, so its exit status becomes ingest's: 0 normally, 1 on a 401 it has explained.
+  # (The local above is named http_code, not status: status is read-only in zsh.)
+  _graphiti_check_auth "$http_code"
 }
 
 # POST /search and emit the raw JSON. $1 query, $2 max_facts (default 10).
 _graphiti_search() {
+  _graphiti_auth
   curl -s -X POST "$GRAPHITI_URL/search" \
+    "${_GRAPHITI_AUTH[@]}" \
     -H 'Content-Type: application/json' \
     -d "$(jq -nc --arg g "$GRAPHITI_GROUP" --arg q "$1" --argjson n "${2:-10}" \
           '{group_ids: [$g], query: $q, max_facts: $n}')"
@@ -121,12 +160,34 @@ _graphiti_count() {
 
 # Emit the search response only if it is JSON with a facts array, so callers can
 # tell "the service is down" from "the graph knows nothing" and say which.
-# $1 query, $2 max_facts.
+# $1 query, $2 max_facts. Diagnoses its own failure on stderr, so callers only
+# have to propagate the non-zero status.
 _graphiti_facts() {
-  local json
+  local json detail
   json=$(_graphiti_search "$1" "${2:-10}")
-  printf '%s' "$json" | jq -e 'has("facts")' >/dev/null 2>&1 || return 1
-  printf '%s' "$json"
+  if printf '%s' "$json" | jq -e 'has("facts")' >/dev/null 2>&1; then
+    printf '%s' "$json"
+    return 0
+  fi
+  # FastAPI reports every error as {"detail": ...}, so a detail field means the service
+  # answered and rejected us — quoting it beats guessing the service is down. The auth
+  # case gets the fix rather than the message, since it is the one users will hit.
+  detail=$(printf '%s' "$json" | jq -r 'if (.detail|type) == "string" then .detail else empty end' 2>/dev/null)
+  case "$detail" in
+    '')
+      echo "  no usable response from $GRAPHITI_URL/search — is the service up? try: health" >&2 ;;
+    *'API key'*)
+      if [ -n "$GRAPHITI_API_KEY" ]; then
+        echo '  401 — GRAPHITI_API_KEY is set but rejected. Re-copy it from the Render' >&2
+        echo '  Dashboard: graphiti-api -> Environment -> GRAPHITI_API_KEY' >&2
+      else
+        echo '  401 — this deployment requires a key, and GRAPHITI_API_KEY is unset:' >&2
+        echo '    export GRAPHITI_API_KEY=...   # graphiti-api -> Environment' >&2
+      fi ;;
+    *)
+      echo "  $GRAPHITI_URL/search refused the request: $detail" >&2 ;;
+  esac
+  return 1
 }
 
 # The current answer, on one line, rendered as the graph edge it came from so it
@@ -140,10 +201,8 @@ ask() {
     echo '  usage: ask "who owns the ledger migration?"' >&2
     return 1
   fi
-  json=$(_graphiti_facts "$1" 10) || {
-    echo "  no usable response from $GRAPHITI_URL/search — is the service up? try: health" >&2
-    return 1
-  }
+  # _graphiti_facts has already said what went wrong.
+  json=$(_graphiti_facts "$1" 10) || return 1
   out=$(printf '%s' "$json" | jq -r '
     (.facts | map(select(.valid_at != null))) as $dated
     | if (.facts | length) == 0 then "  (no facts matched)"
@@ -173,10 +232,8 @@ timeline() {
     echo '  usage: timeline "leads the payments"' >&2
     return 1
   fi
-  json=$(_graphiti_facts "$1" 50) || {
-    echo "  no usable response from $GRAPHITI_URL/search — is the service up? try: health" >&2
-    return 1
-  }
+  # _graphiti_facts has already said what went wrong.
+  json=$(_graphiti_facts "$1" 50) || return 1
   out=$(printf '%s' "$json" | jq -r --arg pat "$1" '
     .facts | map(select(.fact | test($pat; "i"))) | unique_by(.fact) | sort_by(.valid_at)
     | if length == 0 then ["  (no facts match \($pat))"] | .[]
@@ -216,13 +273,12 @@ watch_ingest() {
   local t0 last count stable=0 elapsed baseline
   t0=$(date +%s)
 
-  baseline=$(_graphiti_count "$query")
-  # Without a baseline there is no way to tell new facts from old ones, so stop
-  # rather than poll against an unknown starting point.
-  if [ -z "$baseline" ]; then
-    echo "  no usable response from $GRAPHITI_URL/search — is the service up? try: health" >&2
-    return 1
-  fi
+  # Via _graphiti_facts rather than _graphiti_count, which swallows the response body:
+  # without a baseline there is no way to tell new facts from old ones, so this is the
+  # point to stop and say why — an unset key or a wrong one shows up here as a 401 with
+  # the fix attached, instead of as three minutes of polling that never moves.
+  baseline=$(_graphiti_facts "$query" 50) || return 1
+  baseline=$(printf '%s' "$baseline" | jq '.facts | length')
   # Refuse rather than poll for three minutes and time out: on a populated group
   # the count legitimately may never move, so there is nothing to wait for.
   if [ "$baseline" -gt 0 ] && [ -z "$force" ]; then

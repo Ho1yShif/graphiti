@@ -1,0 +1,53 @@
+"""Bearer-token auth for the graph endpoints.
+
+The API writes to a shared graph and spends the deployment's OpenAI key on every
+episode it ingests, so on Render it ships closed: render.yaml declares GRAPHITI_API_KEY with
+generateValue, and Render mints a random value at deploy time.
+
+Auth is still switchable, because the same code has to run where there is nothing to
+protect. Leave GRAPHITI_API_KEY unset — as `docker compose up` does — and the dependency waves
+every request through, so local development needs no header. Set it and every graph
+endpoint requires one. There is no third state: a key that is present but blank is
+treated as unset by the OptionalStr validator in config, not as a key equal to ''.
+
+/healthcheck is deliberately not covered. Render calls it to decide whether the
+service is live, and it carries no graph data.
+"""
+
+import secrets
+from typing import Annotated
+
+from fastapi import Depends, HTTPException, status
+from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+
+from graph_service.config import Settings, get_settings
+
+# auto_error=False so this returns None instead of raising on a missing or non-Bearer
+# Authorization header. Both cases have to reach the body below, which is the only place
+# that knows whether auth is switched on at all — letting the scheme raise would 403
+# every unauthenticated request even on a deployment with no GRAPHITI_API_KEY set.
+_bearer = HTTPBearer(auto_error=False, description='The GRAPHITI_API_KEY set on this service.')
+
+
+async def require_api_key(
+    # Resolved through get_settings directly rather than config's ZepEnvDep alias, which
+    # has no other consumer left and is being removed as dead code on a parallel branch.
+    settings: Annotated[Settings, Depends(get_settings)],
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
+) -> None:
+    if settings.graphiti_api_key is None:
+        return
+
+    # compare_digest rather than ==, so a wrong key takes the same time to reject
+    # whatever its first differing byte is, and can't be recovered a character at a
+    # time. It needs both sides to exist, hence the guard.
+    if credentials is None or not secrets.compare_digest(
+        credentials.credentials, settings.graphiti_api_key
+    ):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail='Invalid or missing API key. Send it as: Authorization: Bearer <GRAPHITI_API_KEY>',
+            # Required on a 401 by RFC 9110, and it is what tells a client which scheme
+            # to retry with rather than leaving it to guess.
+            headers={'WWW-Authenticate': 'Bearer'},
+        )

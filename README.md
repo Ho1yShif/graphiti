@@ -80,23 +80,43 @@ from `graphiti-api` over Render's private network.
 
 3. Wait for both services to go live. `graphiti-api` passes its health check at `/healthcheck`.
 
-> **This API has no authentication.** Anyone who knows your URL can write to your graph and
-> spend your OpenAI key. Before you point real traffic at it, put it behind your own auth,
-> an API gateway, or a private network. In the meantime, use a dedicated OpenAI key you can
-> revoke and set a monthly spend cap in the OpenAI console — that cap is your backstop.
+4. **Copy your API key.** Every endpoint except `/healthcheck` requires it. Render generated
+   one for you at deploy time, so there's nothing to paste in — open `graphiti-api` →
+   **Environment** in the Dashboard and copy `GRAPHITI_API_KEY`. Send it as a bearer token:
+
+   ```
+   Authorization: Bearer <GRAPHITI_API_KEY>
+   ```
+
+   Rotate it by editing that value; the change takes effect on the restart Render triggers
+   automatically. `/docs` has an **Authorize** button that takes the same value, so you can
+   try endpoints from the browser.
+
+> **This key is the only thing in front of your graph.** It's a single shared secret with no
+> scopes, no per-user identity, and no rate limiting — enough to keep a stranger who finds your
+> URL from writing to your graph and spending your OpenAI key, and not a substitute for real
+> authorization. Before you point production traffic at it, put it behind your own auth or an
+> API gateway. Either way, use a dedicated OpenAI key you can revoke and set a monthly spend
+> cap in the OpenAI console — that cap is your backstop.
+>
+> To turn auth off entirely — only sensible if the service isn't reachable from the internet —
+> delete `GRAPHITI_API_KEY` from the service's environment. Unset means every request is
+> allowed. Blank counts as unset, not as an empty key.
 
 ### Using the app
 
 Ingestion is asynchronous — `/messages` queues the episode and returns immediately, then
 Graphiti extracts entities and facts in the background. Give it 10–30 seconds before searching.
 
-Set your URL once:
+Set your URL and key once:
 
 ```bash
 export GRAPHITI_URL=https://graphiti-api.onrender.com
+export GRAPHITI_API_KEY=...   # graphiti-api → Environment in the Render Dashboard
 ```
 
-1. **Check it's up.**
+1. **Check it's up.** The only endpoint that takes no key — Render polls it to decide the
+   service is live.
 
    ```bash
    curl $GRAPHITI_URL/healthcheck
@@ -112,6 +132,7 @@ export GRAPHITI_URL=https://graphiti-api.onrender.com
 
    ```bash
    curl -X POST $GRAPHITI_URL/messages \
+     -H "Authorization: Bearer $GRAPHITI_API_KEY" \
      -H 'Content-Type: application/json' \
      -d @examples/render/sample-episode.json
    # {"message":"Messages added to processing queue","success":true}
@@ -120,13 +141,15 @@ export GRAPHITI_URL=https://graphiti-api.onrender.com
 3. **Watch the episodes land.**
 
    ```bash
-   curl "$GRAPHITI_URL/episodes/demo?last_n=5"
+   curl "$GRAPHITI_URL/episodes/demo?last_n=5" \
+     -H "Authorization: Bearer $GRAPHITI_API_KEY"
    ```
 
 4. **Search the facts Graphiti extracted.**
 
    ```bash
    curl -X POST $GRAPHITI_URL/search \
+     -H "Authorization: Bearer $GRAPHITI_API_KEY" \
      -H 'Content-Type: application/json' \
      -d '{"group_ids": ["demo"], "query": "who leads the payments team?", "max_facts": 10}'
    ```
@@ -169,8 +192,9 @@ export GRAPHITI_URL=https://graphiti-api.onrender.com
    > here. Don't rely on them to erase a tenant's data.
 
 If you'd rather not paste multi-line `curl` commands, [`examples/render/demo.sh`](examples/render/demo.sh)
-wraps the same endpoints in one-word shell functions. Set `GRAPHITI_URL`, `source` the file (it
-defines functions, so running it won't work), and you get `use_group take1` to pick a group,
+wraps the same endpoints in one-word shell functions. Set `GRAPHITI_URL` and
+`GRAPHITI_API_KEY`, `source` the file (it defines functions, so running it won't work), and you
+get `use_group take1` to pick a group,
 `health`, `ingest` to POST the sample episode with its `group_id` rewritten to match, then
 `watch_ingest` to follow the queue draining, `ask "who owns the ledger migration?"` for the
 current answer, and `timeline "leads the payments"` for every version of a fact oldest-first with
@@ -207,6 +231,11 @@ too — see the note above on why the private network is what isolates it.
 and run `docker compose --profile falkordb up`. That mirrors this Blueprint — the API on
 `http://localhost:8001`, FalkorDB beside it. A plain `docker compose up` runs the repo's other
 pairing, API plus Neo4j, on port 8000.
+
+Compose sets no `GRAPHITI_API_KEY`, so **auth is off locally** and the curl examples above work
+without the header — the stack isn't reachable from the internet, and a key you have to look up
+on every restart is friction with nothing to protect. Set `GRAPHITI_API_KEY` in `.env` to
+exercise the authenticated path before you deploy.
 
 ## Learn more
 

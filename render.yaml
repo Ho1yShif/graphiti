@@ -56,6 +56,18 @@ projects:
               - key: OPENAI_API_KEY
                 sync: false
 
+              # Bearer token for every endpoint except /healthcheck. Render generates a
+              # random value per deploy, so a fork is closed from the moment it goes live
+              # rather than sitting open until someone remembers to lock it down — this
+              # API writes to a shared graph and spends OPENAI_API_KEY on every episode.
+              # Read it from the Dashboard (Environment tab) after the first deploy.
+              #
+              # generateValue rather than sync: false, so the one-click path stays one
+              # click: Render mints the value instead of prompting for one. To rotate,
+              # edit it in the Dashboard; to turn auth off, delete it.
+              - key: GRAPHITI_API_KEY
+                generateValue: true
+
               # The Dockerfile's CMD binds uvicorn to 8000 rather than reading $PORT, so
               # tell Render the same number up front. Without this it starts out expecting
               # its default 10000, discovers 8000, and restarts the deploy to rewire the
