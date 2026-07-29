@@ -30,8 +30,6 @@ _bearer = HTTPBearer(auto_error=False, description='The GRAPHITI_API_KEY set on 
 
 
 async def require_api_key(
-    # Resolved through get_settings directly rather than config's ZepEnvDep alias, which
-    # has no other consumer left and is being removed as dead code on a parallel branch.
     settings: Annotated[Settings, Depends(get_settings)],
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
 ) -> None:

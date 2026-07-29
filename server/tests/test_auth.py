@@ -15,9 +15,11 @@ can catch that.
 import importlib
 
 import pytest
+from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 
 from graph_service import config
+from graph_service.auth import require_api_key
 
 SECRET = 'test-api-key-6Yp2Qk'
 
@@ -119,17 +121,26 @@ def test_healthcheck_stays_public(build_app):
     assert response.json() == {'status': 'healthy'}
 
 
+def _is_protected(route) -> bool:
+    """Whether require_api_key runs before this route's handler.
+
+    Identity, not a name comparison: a same-named dependency from somewhere else would
+    otherwise satisfy the check. Anything that is not an APIRoute has no dependant at
+    all and counts as unprotected — a graph path served by a Mount or a WebSocketRoute
+    is exactly the case this test must not wave through.
+    """
+    if not isinstance(route, APIRoute):
+        return False
+    return any(dependency.call is require_api_key for dependency in route.dependant.dependencies)
+
+
 def test_every_graph_route_is_protected(build_app):
     """A router included without the dependency would silently expose the graph."""
     app = build_app(SECRET)
     unprotected = {
         route.path
         for route in app.routes
-        if route.path.startswith(GRAPH_PREFIXES)
-        and not any(
-            dependency.call is not None and dependency.call.__name__ == 'require_api_key'
-            for dependency in getattr(route, 'dependant', None).dependencies
-        )
+        if route.path.startswith(GRAPH_PREFIXES) and not _is_protected(route)
     }
     assert not unprotected, f'graph routes missing auth: {sorted(unprotected)}'
 

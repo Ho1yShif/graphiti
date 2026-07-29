@@ -68,10 +68,10 @@ _graphiti_auth() {
   [ -n "$GRAPHITI_API_KEY" ] && _GRAPHITI_AUTH=(-H "Authorization: Bearer $GRAPHITI_API_KEY")
 }
 
-# Turn the 401 that a missing or stale key produces into the fix, rather than leaving the
-# caller to read a bare status code. $1 is the HTTP status.
-_graphiti_check_auth() {
-  [ "$1" = 401 ] || return 0
+# Turn a 401 into the fix, rather than leaving the caller to read a bare status code.
+# Two callers reach this: ingest, which sees the status, and _graphiti_facts, which sees
+# the message — hence the split below rather than one function taking a status.
+_graphiti_auth_hint() {
   if [ -n "$GRAPHITI_API_KEY" ]; then
     echo '  401 — GRAPHITI_API_KEY is set but rejected. Re-copy it from the Render' >&2
     echo '  Dashboard: graphiti-api -> Environment -> GRAPHITI_API_KEY' >&2
@@ -80,6 +80,13 @@ _graphiti_check_auth() {
     echo '    export GRAPHITI_API_KEY=...   # graphiti-api -> Environment' >&2
   fi
   return 1
+}
+
+# $1 is an HTTP status. Returns 1 and explains if it is a 401, 0 otherwise, so a caller
+# can end with this and let it decide the exit status.
+_graphiti_check_auth() {
+  [ "$1" = 401 ] || return 0
+  _graphiti_auth_hint
 }
 
 # Where the sample episode lives, resolved once at source time so the helpers
@@ -114,7 +121,9 @@ health() {
 # --data-binary rather than -d: -d strips newlines, which is harmless for JSON
 # but makes the payload unreadable if you ever need to echo it back.
 ingest() {
-  local file="${1:-$GRAPHITI_EPISODE}" tmp body code http_code
+  # http_code, not status: status is read-only in zsh, which is the shell most readers
+  # of this README are sourcing it into.
+  local file="${1:-$GRAPHITI_EPISODE}" tmp body metrics http_code
   [ -f "$file" ] || { echo "  no episode file at $file" >&2; return 1; }
   # An explicit XXXXXX template: macOS accepts a bare prefix after -t, GNU and
   # BusyBox mktemp reject it, so -t alone would break the helper on Linux.
@@ -122,13 +131,13 @@ ingest() {
   body=$(mktemp "${TMPDIR:-/tmp}/graphiti-ingest.XXXXXX") || { rm -f "$tmp"; return 1; }
   jq --arg g "$GRAPHITI_GROUP" '.group_id = $g' "$file" > "$tmp" || { rm -f "$tmp" "$body"; return 1; }
   _graphiti_auth
-  code=$(curl -sS -o "$body" -w '%{http_code} %{time_total}' \
+  metrics=$(curl -sS -o "$body" -w '%{http_code} %{time_total}' \
     -X POST "$GRAPHITI_URL/messages" \
     "${_GRAPHITI_AUTH[@]}" \
     -H 'Content-Type: application/json' \
     --data-binary @"$tmp")
-  http_code="${code% *}"
-  printf '  ingest → HTTP %s in %ss (group %s)\n' "$http_code" "${code#* }" "$GRAPHITI_GROUP"
+  http_code="${metrics% *}"
+  printf '  ingest → HTTP %s in %ss (group %s)\n' "$http_code" "${metrics#* }" "$GRAPHITI_GROUP"
   # A 202 body is just an ack, so only surface it when something went wrong.
   case "$http_code" in
     2*) ;;
@@ -136,7 +145,6 @@ ingest() {
   esac
   rm -f "$tmp" "$body"
   # Last, so its exit status becomes ingest's: 0 normally, 1 on a 401 it has explained.
-  # (The local above is named http_code, not status: status is read-only in zsh.)
   _graphiti_check_auth "$http_code"
 }
 
@@ -177,13 +185,7 @@ _graphiti_facts() {
     '')
       echo "  no usable response from $GRAPHITI_URL/search — is the service up? try: health" >&2 ;;
     *'API key'*)
-      if [ -n "$GRAPHITI_API_KEY" ]; then
-        echo '  401 — GRAPHITI_API_KEY is set but rejected. Re-copy it from the Render' >&2
-        echo '  Dashboard: graphiti-api -> Environment -> GRAPHITI_API_KEY' >&2
-      else
-        echo '  401 — this deployment requires a key, and GRAPHITI_API_KEY is unset:' >&2
-        echo '    export GRAPHITI_API_KEY=...   # graphiti-api -> Environment' >&2
-      fi ;;
+      _graphiti_auth_hint ;;
     *)
       echo "  $GRAPHITI_URL/search refused the request: $detail" >&2 ;;
   esac
@@ -270,15 +272,15 @@ watch_ingest() {
   # Consume --force before reading the query, or it would become the query.
   [ "$1" = '--force' ] && { force=1; shift; }
   local query="${1:-$GRAPHITI_QUERY}"
-  local t0 last count stable=0 elapsed baseline
+  local t0 last count stable=0 elapsed baseline json
   t0=$(date +%s)
 
   # Via _graphiti_facts rather than _graphiti_count, which swallows the response body:
   # without a baseline there is no way to tell new facts from old ones, so this is the
   # point to stop and say why — an unset key or a wrong one shows up here as a 401 with
   # the fix attached, instead of as three minutes of polling that never moves.
-  baseline=$(_graphiti_facts "$query" 50) || return 1
-  baseline=$(printf '%s' "$baseline" | jq '.facts | length')
+  json=$(_graphiti_facts "$query" 50) || return 1
+  baseline=$(printf '%s' "$json" | jq '.facts | length')
   # Refuse rather than poll for three minutes and time out: on a populated group
   # the count legitimately may never move, so there is nothing to wait for.
   if [ "$baseline" -gt 0 ] && [ -z "$force" ]; then

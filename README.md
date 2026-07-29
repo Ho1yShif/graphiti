@@ -192,10 +192,9 @@ export GRAPHITI_API_KEY=...   # graphiti-api → Environment in the Render Dashb
    > here. Don't rely on them to erase a tenant's data.
 
 If you'd rather not paste multi-line `curl` commands, [`examples/render/demo.sh`](examples/render/demo.sh)
-wraps the same endpoints in one-word shell functions. Set `GRAPHITI_URL` and
-`GRAPHITI_API_KEY`, `source` the file (it defines functions, so running it won't work), and you
-get `use_group take1` to pick a group,
-`health`, `ingest` to POST the sample episode with its `group_id` rewritten to match, then
+wraps the same endpoints in one-word shell functions. Set `GRAPHITI_URL` and `GRAPHITI_API_KEY`,
+`source` the file (it defines functions, so running it won't work), and you get `use_group take1`
+to pick a group, `health`, `ingest` to POST the sample episode with its `group_id` rewritten, then
 `watch_ingest` to follow the queue draining, `ask "who owns the ledger migration?"` for the
 current answer, and `timeline "leads the payments"` for every version of a fact oldest-first with
 its relationship label and validity window. It's a thin projection over `/search` — the raw
