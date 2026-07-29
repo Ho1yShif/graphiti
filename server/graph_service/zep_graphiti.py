@@ -92,9 +92,10 @@ def _create_openai_clients(
     api_key = settings.openai_api_key
     base_url = settings.openai_base_url
 
-    # Set after construction rather than passed in, because the model is read at call time
-    # and passing None would clobber the config's own default instead of falling back to it.
     embedder_config = OpenAIEmbedderConfig(api_key=api_key, base_url=base_url)
+    # Assigned only when set, rather than passed to the constructor: embedding_model
+    # defaults to a real model name, so handing it None would overwrite that default.
+    # LLMConfig.model below defaults to None, which is why it can be passed straight in.
     if settings.embedding_model_name is not None:
         embedder_config.embedding_model = settings.embedding_model_name
 
@@ -116,14 +117,14 @@ def _create_graphiti_client(settings: Settings) -> ZepGraphiti:
     if settings.db_backend == 'falkordb':
         from graphiti_core.driver.falkordb_driver import FalkorDriver
 
-        driver = FalkorDriver(  # type: ignore
-            host=settings.falkordb_host or 'localhost',  # type: ignore
-            port=settings.falkordb_port or 6379,  # type: ignore
-            username=settings.falkordb_username,  # type: ignore
-            password=settings.falkordb_password,  # type: ignore
-            database=settings.falkordb_database or 'default_db',  # type: ignore
+        driver = FalkorDriver(
+            host=settings.falkordb_host or 'localhost',
+            port=settings.falkordb_port or 6379,
+            username=settings.falkordb_username,
+            password=settings.falkordb_password,
+            database=settings.falkordb_database or 'default_db',
         )
-        return ZepGraphiti(  # type: ignore
+        return ZepGraphiti(
             graph_driver=driver,
             llm_client=llm_client,
             embedder=embedder,
