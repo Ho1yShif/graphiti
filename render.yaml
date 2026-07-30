@@ -56,18 +56,16 @@ projects:
               - key: OPENAI_API_KEY
                 sync: false
 
-              # Bearer token for every endpoint except /healthcheck. Render generates a
-              # random value the first time this var is created, so a fork is closed
-              # from the moment it goes live rather than sitting open until someone
-              # remembers to lock it down — this API writes to a shared graph and spends
-              # OPENAI_API_KEY on every episode. Read it from the Dashboard (Environment
-              # tab) after the first deploy.
+              # Bearer token for every endpoint except /healthcheck, and the server will
+              # not start without it: this API writes to a shared graph and spends
+              # OPENAI_API_KEY on every episode, so a fork is closed from the moment it
+              # goes live. Read the value from the Dashboard (Environment tab) after the
+              # first deploy.
               #
-              # generateValue rather than sync: false, so the one-click path stays one
-              # click: Render mints the value instead of prompting for one. It is
-              # generated once, not re-rolled on later deploys, so a client that has the
-              # key keeps working — which also means rotation is manual: edit the value
-              # in the Dashboard. To turn auth off, delete the var.
+              # generateValue rather than sync: false keeps the one-click path one click —
+              # Render mints the value instead of prompting for one. It is generated once
+              # and persists across syncs, so clients holding the key keep working; that
+              # also makes rotation a manual edit here or in the Dashboard.
               - key: GRAPHITI_API_KEY
                 generateValue: true
 

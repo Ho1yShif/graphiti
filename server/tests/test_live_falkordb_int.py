@@ -50,11 +50,9 @@ FALKORDB_PORT = int(os.environ.get('FALKORDB_PORT', '6379'))
 
 pytestmark = [pytest.mark.integration]
 
-# The live server is spawned with auth switched on, matching what render.yaml deploys, so
-# this exercises the configuration users actually run rather than the local no-key one.
-# Pinned rather than inherited: the README tells you to put a GRAPHITI_API_KEY in the
-# project-root .env to try the authenticated path, and load_dotenv above would then hand
-# that key to the subprocess and 401 every request here.
+# The key the live server is spawned with. Auth is mandatory, so it needs one to boot at all.
+# Pinned rather than inherited: a GRAPHITI_API_KEY in the project-root .env would otherwise
+# reach the subprocess through load_dotenv above and 401 every request here.
 API_KEY = 'srvtest-api-key'
 AUTH_HEADERS = {'Authorization': f'Bearer {API_KEY}'}
 
@@ -207,8 +205,8 @@ def _search_until(
 
 
 def test_healthcheck(live_server: tuple[str, str]) -> None:
-    # No auth header, against a server that has a key set: /healthcheck has to stay public
-    # or Render's health poll fails the deploy and rolls it back.
+    # Deliberately no auth header: /healthcheck has to stay public or Render's health poll
+    # fails the deploy and rolls it back.
     base_url, _ = live_server
     with httpx.Client(base_url=base_url, timeout=10) as client:
         resp = client.get('/healthcheck')

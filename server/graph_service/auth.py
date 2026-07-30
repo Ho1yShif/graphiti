@@ -1,23 +1,17 @@
 """Bearer-token auth for the graph endpoints.
 
-The API writes to a shared graph and spends the deployment's OpenAI key on every episode
-it ingests, so on Render it ships closed: render.yaml declares GRAPHITI_API_KEY with
-generateValue, and Render mints a random value when it first creates the variable. See
-that file for how the key is generated and rotated.
+Every endpoint except /healthcheck requires GRAPHITI_API_KEY as a bearer token. It is not
+optional and there is no switch to turn it off: the API writes to a shared graph and spends
+the deployment's OpenAI key on every episode. The key is required at startup (see
+config.py), so this dependency can assume there is one — Render generates the value when it
+first creates the service, and compose supplies a local one.
 
-Auth is switchable, because the same code has to run where there is nothing to protect.
-Leave GRAPHITI_API_KEY unset — as `docker compose up` does — and the dependency waves
-every request through, so local development needs no header. Set it and every graph
-endpoint requires one. There is no third state: a key that is present but blank is
-treated as unset by the OptionalStr validator in config, not as a key equal to ''.
+Keep the key ASCII, as the generated one is. Header values are latin-1 on the wire and
+clients encode anything outside it inconsistently, so a key with an accent in it may never
+match what arrives here — it fails closed, locking you out rather than letting anyone in.
 
-Keep the key ASCII, as the generated one is. HTTP header values are latin-1 on the wire
-and clients encode non-ASCII bytes inconsistently, so a key with an accent in it may
-never match what arrives here no matter what the caller sends — it fails closed, which
-locks you out rather than letting anyone in.
-
-/healthcheck is deliberately not covered. Render calls it to decide whether the
-service is live, and it carries no graph data.
+/healthcheck stays public: Render polls it to decide the service is live, and it exposes
+nothing about the graph.
 """
 
 import secrets
@@ -26,40 +20,31 @@ from typing import Annotated
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
-from graph_service.config import Settings, get_settings
+from graph_service.config import ZepEnvDep
 
-# auto_error=False so this returns None instead of raising on a missing or non-Bearer
-# Authorization header. Both cases have to reach the body below, which is the only place
-# that knows whether auth is switched on at all — letting the scheme raise would 403
-# every unauthenticated request even on a deployment with no GRAPHITI_API_KEY set.
+# auto_error=False so a missing or non-Bearer header arrives here as None instead of the
+# scheme raising: on its own it answers 403, and the header being absent is a 401 with
+# WWW-Authenticate — the response that tells a client what to send instead of just no.
 _bearer = HTTPBearer(auto_error=False, description='The GRAPHITI_API_KEY set on this service.')
 
 
-# Settings are injected as a spelled-out Annotated rather than via config's ZepEnvDep
-# alias, which is what the routers use. Deliberate: it keeps this module's only dependency
-# on config the settings class itself, so auth does not break if that alias is retired.
 async def require_api_key(
-    settings: Annotated[Settings, Depends(get_settings)],
+    settings: ZepEnvDep,
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
 ) -> None:
-    if settings.graphiti_api_key is None:
-        return
-
-    # compare_digest rather than ==, so a wrong key takes the same time to reject
-    # whatever its first differing byte is, and can't be recovered a character at a
-    # time. It needs both sides to exist, hence the guard.
+    # compare_digest rather than ==, so a wrong key can't be recovered a byte at a time
+    # from how long it takes to reject. It needs both sides to exist, hence the guard.
     #
-    # Compared as bytes, not str: compare_digest raises TypeError on a str that isn't
-    # ASCII-only, and either side can be one — Starlette decodes headers as latin-1, and
-    # nothing stops an operator rotating GRAPHITI_API_KEY to a value with an accent in
-    # it. Encoding first turns both cases into a 401 rather than a 500.
+    # Compared as bytes: compare_digest raises TypeError on a non-ASCII str, and either
+    # side can be one — Starlette decodes headers as latin-1, and nothing stops an
+    # operator rotating the key to a value with an accent in it. Encoding first makes both
+    # a 401 rather than a 500.
     if credentials is None or not secrets.compare_digest(
         credentials.credentials.encode(), settings.graphiti_api_key.encode()
     ):
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
             detail='Invalid or missing API key. Send it as: Authorization: Bearer <GRAPHITI_API_KEY>',
-            # Required on a 401 by RFC 9110, and it is what tells a client which scheme
-            # to retry with rather than leaving it to guess.
+            # Required on a 401 by RFC 9110, and it tells the client which scheme to retry.
             headers={'WWW-Authenticate': 'Bearer'},
         )

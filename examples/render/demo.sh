@@ -5,10 +5,6 @@
 #   export GRAPHITI_API_KEY=...   # graphiti-api -> Environment in the Render Dashboard
 #   source examples/render/demo.sh
 #
-# GRAPHITI_API_KEY is optional only because a local `docker compose` stack sets no key and
-# so requires no header. Against anything deployed it is required, and leaving it out gets
-# you 401s from every helper except health.
-#
 # Then:
 #   use_group take1         point everything at a group, one take per group
 #   health                  is the service up
@@ -50,48 +46,43 @@ fi
 unset _graphiti_sourced
 
 : "${GRAPHITI_URL:?set GRAPHITI_URL first, e.g. export GRAPHITI_URL=https://graphiti-api.onrender.com}"
+# Every endpoint but /healthcheck needs it, so refuse up front rather than 401 six times.
+# A local compose stack defaults to local-dev-key.
+: "${GRAPHITI_API_KEY:?set GRAPHITI_API_KEY first — graphiti-api -> Environment in the Render Dashboard}"
 : "${GRAPHITI_GROUP:=demo}"
 # The default search string watch_ingest counts facts against.
 : "${GRAPHITI_QUERY:=payments team ledger migration}"
 
 command -v jq >/dev/null || echo 'demo.sh: jq not found — brew install jq'
 
-# curl with the bearer header attached, or plain curl when no key is set so a local
-# no-auth stack still works. Every call to the API goes through this, so the header is
-# built in exactly one place and a new helper cannot forget it.
+# curl with the bearer header attached. Every call to the API goes through this, so the
+# header is built in one place and a new helper cannot forget it. Reading the variable per
+# call means re-exporting a rotated key takes effect without re-sourcing.
 #
-# Two branches rather than one call with an interpolated header argument: the value
-# contains a space, so an empty-when-unset variable would either word-split into two
-# broken arguments or, quoted, send a literal empty header. Reading GRAPHITI_API_KEY per
-# call also means exporting it after sourcing takes effect without re-sourcing.
+# -H @- reads the header from stdin rather than taking it as an argument, so the key never
+# lands in this process's argv, where any other user on the machine could read it out of
+# `ps`. Needs curl 7.55 (2017) or newer. No helper sends a body on stdin, so stdin is free.
 _graphiti_curl() {
-  if [ -n "$GRAPHITI_API_KEY" ]; then
-    # -H @- reads the header from stdin rather than taking it as an argument, so the key
-    # never lands in this process's argv, where any other user on the machine could read
-    # it out of `ps`. Needs curl 7.55 (2017) or newer; macOS and current distros are well
-    # past that. No helper passes a request body on stdin, so stdin is free to use here.
-    printf 'Authorization: Bearer %s\n' "$GRAPHITI_API_KEY" | curl -H @- "$@"
-  else
-    curl "$@"
-  fi
+  printf 'Authorization: Bearer %s\n' "$GRAPHITI_API_KEY" | curl -H @- "$@"
 }
 
-# $1 is an HTTP status. Returns 0 unless it is a 401, in which case it turns that into
-# the fix on stderr and returns 1 — so a caller can end with this and let it decide the
-# exit status, or use it as `|| return 1` mid-function.
+# $1 is an HTTP status. Returns 0 on 2xx, or explains the failure on stderr and returns 1 —
+# so a caller can end with this and let it decide the exit status, or use it as
+# `|| return 1` mid-function.
 #
 # Keyed off the status rather than the message body: the wording of the API's 401 is
-# auth.py's to change, and matching on it would leave this silently falling through to
-# the generic "refused the request" branch the day it did.
-_graphiti_check_auth() {
-  [ "$1" = 401 ] || return 0
-  if [ -n "$GRAPHITI_API_KEY" ]; then
-    echo '  401 — GRAPHITI_API_KEY is set but rejected. Re-copy it from the Render' >&2
-    echo '  Dashboard: graphiti-api -> Environment -> GRAPHITI_API_KEY' >&2
-  else
-    echo '  401 — this deployment requires a key, and GRAPHITI_API_KEY is unset:' >&2
-    echo '    export GRAPHITI_API_KEY=...   # graphiti-api -> Environment' >&2
-  fi
+# auth.py's to change, and matching on it would leave this silently misreporting.
+_graphiti_check_status() {
+  case "$1" in
+    2*) return 0 ;;
+    401)
+      echo '  401 — GRAPHITI_API_KEY was rejected. Re-copy it from the Render Dashboard:' >&2
+      echo '    graphiti-api -> Environment -> GRAPHITI_API_KEY' >&2 ;;
+    000)
+      echo "  no response from $GRAPHITI_URL — is the service up? try: health" >&2 ;;
+    *)
+      echo "  HTTP $1 from $GRAPHITI_URL" >&2 ;;
+  esac
   return 1
 }
 
@@ -142,21 +133,21 @@ ingest() {
     --data-binary @"$tmp")
   http_code="${metrics% *}"
   printf '  ingest → HTTP %s in %ss (group %s)\n' "$http_code" "${metrics#* }" "$GRAPHITI_GROUP"
-  # A 202 body is just an ack, so only surface it when something went wrong — and not
-  # on a 401 either, where the hint below already says everything the body would, with
-  # the fix attached.
+  # A 202 body is just an ack, so only surface it when something went wrong — and not on a
+  # 401, where the hint below says everything the body would with the fix attached.
   case "$http_code" in
     2*|401) ;;
     *) jq -c . "$body" 2>/dev/null || cat "$body" ;;
   esac
   rm -f "$tmp" "$body"
-  # Last, so its exit status becomes ingest's: 0 normally, 1 on a 401 it has explained.
-  _graphiti_check_auth "$http_code"
+  # Last, so its exit status becomes ingest's: anything but a 2xx is a failure the caller
+  # can act on, rather than a line of output that scrolls past looking like progress.
+  _graphiti_check_status "$http_code"
 }
 
-# POST /search and emit the response body, then the HTTP status on a final line.
-# $1 query, $2 max_facts (default 10). Only _graphiti_facts calls this — it splits the
-# two apart — because the status is what tells a 401 from a service that is simply down.
+# POST /search and emit the response body, then the HTTP status on a final line. $1 query,
+# $2 max_facts (default 10). Only _graphiti_facts calls this — it splits the two apart —
+# because the status is what tells a rejected key from a service that is simply down.
 _graphiti_search() {
   _graphiti_curl -s -w '\n%{http_code}' -X POST "$GRAPHITI_URL/search" \
     -H 'Content-Type: application/json' \
@@ -179,27 +170,28 @@ _graphiti_facts() {
     printf '%s' "$json"
     return 0
   fi
-  _graphiti_check_auth "$http_code" || return 1
+  # A 401 gets the fix rather than its body, which says the same thing without one.
+  [ "$http_code" = 401 ] && { _graphiti_check_status "$http_code"; return 1; }
   # FastAPI reports every other error as {"detail": ...}, so a detail field means the
   # service answered and rejected us — quoting it beats guessing the service is down.
   detail=$(printf '%s' "$json" | jq -r 'if (.detail|type) == "string" then .detail else empty end' 2>/dev/null)
-  if [ -z "$detail" ]; then
-    echo "  no usable response from $GRAPHITI_URL/search — is the service up? try: health" >&2
-  else
+  if [ -n "$detail" ]; then
     echo "  $GRAPHITI_URL/search refused the request: $detail" >&2
+  else
+    _graphiti_check_status "$http_code"
   fi
+  # Unconditional: this is the failure path, whatever the status was.
   return 1
 }
 
-# How many facts the current group returns for $1, or empty if the service did
-# not answer with usable JSON. Callers must handle empty: a cold start or a 502
-# yields no output, and feeding that to [ ] produces "integer expression
-# expected" instead of anything a reader can act on.
+# How many facts the current group returns for $1, or empty if the service did not answer
+# with usable JSON. Callers must handle empty: a cold start or a 502 yields no output, and
+# feeding that to [ ] produces "integer expression expected" instead of anything a reader
+# can act on.
 #
-# The quiet variant of _graphiti_facts: the poll loop in watch_ingest tolerates a
-# dropped request by carrying the last count forward, so a diagnostic on every blip
-# would be noise scrolling past a progress display. The loop's caller has already
-# had one from the baseline call.
+# The quiet variant of _graphiti_facts, because watch_ingest's poll loop tolerates a dropped
+# request by carrying the last count forward, and a diagnostic on every blip would scroll
+# past under a progress display. The loop's baseline call has already made any noise.
 _graphiti_count() {
   _graphiti_facts "$1" 50 2>/dev/null | jq -e '.facts | length' 2>/dev/null
 }
@@ -287,10 +279,10 @@ watch_ingest() {
   local t0 last count stable=0 elapsed baseline json
   t0=$(date +%s)
 
-  # Via _graphiti_facts rather than _graphiti_count, which is deliberately silent:
-  # without a baseline there is no way to tell new facts from old ones, so this is the
-  # point to stop and say why — an unset key or a wrong one shows up here as a 401 with
-  # the fix attached, instead of as three minutes of polling that never moves.
+  # Via _graphiti_facts rather than the silent _graphiti_count: without a baseline there is
+  # no way to tell new facts from old ones, so this is the point to stop and say why — a
+  # rejected key surfaces here with the fix attached, rather than as three minutes of
+  # polling that never moves.
   json=$(_graphiti_facts "$query" 50) || return 1
   baseline=$(printf '%s' "$json" | jq '.facts | length')
   # Refuse rather than poll for three minutes and time out: on a populated group

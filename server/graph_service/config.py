@@ -24,11 +24,17 @@ def _blank_to_none(value: Any) -> Any:
 OptionalStr = Annotated[str | None, BeforeValidator(_blank_to_none)]
 OptionalInt = Annotated[int | None, BeforeValidator(_blank_to_none)]
 
+# The same idea for a setting that has to be present: strip first, so whitespace fails the
+# min_length check on the fields below rather than passing as a one-space secret. Stripping
+# also survives a key pasted with a trailing newline, which the OpenAI SDK would otherwise
+# put in a header and fail on.
+RequiredStr = Annotated[str, BeforeValidator(lambda v: v.strip() if isinstance(v, str) else v)]
+
 
 class Settings(BaseSettings):
     # Rejected when blank rather than defaulted, so a missing key fails the deploy at
     # startup instead of turning every background ingestion into a 401 nobody is watching.
-    openai_api_key: str = Field(min_length=1)
+    openai_api_key: RequiredStr = Field(min_length=1)
     openai_base_url: OptionalStr = None
     model_name: OptionalStr = None
     embedding_model_name: OptionalStr = None
@@ -43,10 +49,12 @@ class Settings(BaseSettings):
     # Only these two backends are wired up in zep_graphiti, so a typo should be a startup
     # error naming the valid values, not a silent fall-through to the Neo4j branch.
     db_backend: Literal['neo4j', 'falkordb'] = 'neo4j'
-    # Bearer token for the graph endpoints. Render generates one when it first creates the
-    # variable, and leaves it alone afterwards; unset (as in local compose) switches auth
-    # off entirely. See auth.py.
-    graphiti_api_key: OptionalStr = None
+    # Bearer token for every endpoint except /healthcheck. Required, and required with no
+    # way to switch off: this API writes to a shared graph and spends openai_api_key on
+    # every episode, so a deployment that boots open is never what anyone wanted. A missing
+    # key fails at startup instead — an open service and a service that 401s everything
+    # both look healthy to Render. Render generates the value; compose supplies a dev one.
+    graphiti_api_key: RequiredStr = Field(min_length=1)
 
     model_config = SettingsConfigDict(env_file='.env', extra='ignore')
 
