@@ -3,12 +3,11 @@ services:
     profiles: [""]
     build:
       context: .
-    # Bound to 127.0.0.1, not the bare "8000:8000" that publishes on every interface. The
-    # local stack's GRAPHITI_API_KEY default is committed to this repo, so on a shared
-    # network the bare form hands the graph to anyone who can read the file — and a default
-    # that is only safe if you read a comment first is the wrong default. Localhost is all
-    # the README examples and demo.sh need; drop the prefix deliberately if you want to
-    # reach this from another machine, and set your own key when you do.
+    # Bound to 127.0.0.1, not the bare "8000:8000" that publishes on every interface: the
+    # GRAPHITI_API_KEY default below is committed to this repo, so the bare form would hand the
+    # graph to anyone on a shared network. Localhost is all the README examples and demo.sh
+    # need; drop the prefix deliberately to reach this from another machine, and set your own
+    # key in the same edit.
     ports:
       - "127.0.0.1:8000:8000"
     healthcheck:
@@ -38,10 +37,8 @@ services:
     environment:
       - OPENAI_API_KEY=${OPENAI_API_KEY}
       # Auth is mandatory, so the stack needs a key to boot. Defaulted like NEO4J_PASSWORD
-      # below: a throwaway for a local stack, overridden by .env if you set your own. Named
-      # insecure- on purpose — it is committed to this repo, so it protects nothing. What
-      # keeps that from mattering is the localhost binding on the ports above, not this
-      # value; set your own key if you ever unbind them.
+      # below, and named insecure- on purpose: it is committed to this repo, so it protects
+      # nothing. The localhost binding above is what keeps that from mattering, not this value.
       - GRAPHITI_API_KEY=${GRAPHITI_API_KEY:-insecure-local-dev-key}
       - NEO4J_URI=bolt://neo4j:${NEO4J_PORT:-7687}
       - NEO4J_USER=${NEO4J_USER:-neo4j}

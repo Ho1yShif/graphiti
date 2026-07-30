@@ -35,15 +35,13 @@ OptionalInt = Annotated[int | None, BeforeValidator(_blank_to_none)]
 # put in a header and fail on.
 RequiredStr = Annotated[str, BeforeValidator(_strip)]
 
-# Entropy floor for graphiti_api_key. auth.py budgets rejections, so guessing this key over
-# the network is already hopeless; what a length floor adds is that the key is not *already*
-# guessed. `dev` and `test` fall to the first attempt of any wordlist, and a budget that
-# allows ten attempts a minute is no defence against a key sitting in the first ten. 16
-# printable characters is past where a hand-chosen key is a dictionary word. Render's
-# generated value is comfortably longer; this exists for the keys people choose themselves.
+# Entropy floor for graphiti_api_key. The rejection budget in auth.py stops a stranger working
+# through the keyspace; a length floor stops a key that is *already* at the front of it, which a
+# budget of ten attempts a minute is no defence against. Render's generated value is far longer —
+# this exists for the keys people choose themselves on rotation.
 #
-# A named constant rather than a literal in the Field, so tests/test_auth.py can pin the
-# boundary against this number instead of restating it and drifting from it later.
+# Named rather than a literal in the Field, so tests/test_auth.py can pin the boundary against
+# this number instead of restating it and drifting from it.
 MIN_API_KEY_LENGTH = 16
 
 
@@ -65,30 +63,21 @@ class Settings(BaseSettings):
     # Only these two backends are wired up in zep_graphiti, so a typo should be a startup
     # error naming the valid values, not a silent fall-through to the Neo4j branch.
     db_backend: Literal['neo4j', 'falkordb'] = 'neo4j'
-    # Bearer token for every endpoint except /healthcheck. Required, and required with no
-    # way to switch off: this API writes to a shared graph and spends openai_api_key on
-    # every episode, so a deployment that boots open is never what anyone wanted. A missing
-    # key fails at startup instead — an open service and a service that 401s everything
-    # both look healthy to Render. Render generates the value; compose supplies a dev one.
+    # Bearer token for every endpoint except /healthcheck, with no way to switch off: this API
+    # writes to a shared graph and spends openai_api_key on every episode. Missing means a
+    # startup failure, because an open service and a service that 401s everything both look
+    # healthy to Render. Render generates the value; compose supplies a dev one.
     #
-    # The pattern is printable ASCII, which is what can survive the trip through an HTTP
-    # header: values go over the wire as latin-1 and clients disagree about how to encode
-    # anything outside ASCII, so a key with an accent in it authenticates for some clients
-    # and not others. Rejected here rather than left to auth.py, so rotating the key to a
-    # passphrase fails the deploy — with this message — instead of quietly 401ing the
-    # operator who just set it, which looks identical to having typed it in wrong.
+    # Printable ASCII is what survives an HTTP header — values go over the wire as latin-1 and
+    # clients disagree about encoding anything outside it, so a key with an accent in it
+    # authenticates for some clients and not others. Both constraints are enforced here rather
+    # than in auth.py so a bad rotation fails the deploy, naming the problem, while Render keeps
+    # serving the previous version — instead of 401ing the operator who just set it, which looks
+    # identical to having typed it in wrong.
     #
-    # The length floor is the same bargain applied to strength. Render generates a strong
-    # value, but rotation is a hand edit in the Dashboard and nothing there would stop
-    # `GRAPHITI_API_KEY=dev` — a key the rejection budget in auth.py cannot save, because it
-    # is guessed on the first attempt rather than the ten-thousandth. Refusing it at startup
-    # fails the deploy while Render keeps serving the previous version, which is the safe
-    # direction to fail.
-    #
-    # Caveat for whoever reads a failed deploy log: pydantic includes the offending value in
-    # its message, so a key rejected here is echoed into the log. That is only ever a key
-    # that never authenticated, and scrubbing it would mean catching ValidationError in
-    # get_settings() and degrading the startup message for every other setting.
+    # Caveat when reading a failed deploy log: pydantic echoes the offending value into its
+    # message. That is only ever a key that never authenticated, and scrubbing it would mean
+    # catching ValidationError in get_settings() and degrading every other setting's message.
     graphiti_api_key: RequiredStr = Field(min_length=MIN_API_KEY_LENGTH, pattern=r'^[\x20-\x7e]+$')
 
     model_config = SettingsConfigDict(env_file='.env', extra='ignore')

@@ -1,8 +1,10 @@
 services:
   graph:
     image: graphiti-service:${GITHUB_SHA}
+    # Localhost-bound, as in docker-compose.yml: the GRAPHITI_API_KEY default below is
+    # committed, so publishing on every interface would expose the graph on a shared network.
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     healthcheck:
       test:
         [
@@ -28,9 +30,11 @@ services:
 
   neo4j:
     image: neo4j:5.26.2
+    # Localhost-bound, and with more at stake: Bolt is unmediated write access to the graph.
+    # `graph` reaches it over the compose network, so nothing here depends on these.
     ports:
-      - "7474:7474"
-      - "${NEO4J_PORT}:${NEO4J_PORT}"
+      - "127.0.0.1:7474:7474"
+      - "127.0.0.1:${NEO4J_PORT}:${NEO4J_PORT}"
     healthcheck:
       test: wget "http://localhost:${NEO4J_PORT}" || exit 1
       interval: 1s
