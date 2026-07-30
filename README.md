@@ -92,11 +92,13 @@ from `graphiti-api` over Render's private network.
    Auth is mandatory — the service won't start without a key, so a fork can't go live open by
    accident. The generated value persists across deploys, so rotating it is up to you: edit it
    in the Dashboard and Render restarts the service with the new value. The replacement has to
-   be printable ASCII, as the generated one is — HTTP sends header values as latin-1 and
-   clients disagree about how to encode anything outside it, so a key with an accent or an
-   emoji in it would authenticate for some clients and not others. The service refuses to
-   start on one rather than leaving you to discover it as a 401, so a bad rotation fails the
-   deploy and Render keeps serving the previous version.
+   be at least 16 printable-ASCII characters, as the generated one is. Length because nothing
+   rate-limits this API, so the key is all that stands between a stranger and your graph, and
+   `dev` is not a key; printable ASCII because HTTP sends header values as latin-1 and clients
+   disagree about how to encode anything outside it, so a key with an accent or an emoji in it
+   would authenticate for some clients and not others. The service refuses to start on either
+   rather than leaving you to discover it as a 401, so a bad rotation fails the deploy and
+   Render keeps serving the previous version.
 
    The API docs at `/docs` stay open, and you can authorize them in the browser: click
    **Authorize**, paste the key, and **Try it out** works against your deployment.

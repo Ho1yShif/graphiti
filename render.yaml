@@ -65,7 +65,10 @@ projects:
               # generateValue rather than sync: false keeps the one-click path one click —
               # Render mints the value instead of prompting for one. It is generated once
               # and persists across syncs, so clients holding the key keep working; that
-              # also makes rotation a manual edit here or in the Dashboard.
+              # also makes rotation a manual edit here or in the Dashboard. A replacement
+              # has to be at least 16 printable-ASCII characters or the service refuses to
+              # start, which fails the deploy rather than weakening the only control in
+              # front of the graph — see graph_service/config.py.
               - key: GRAPHITI_API_KEY
                 generateValue: true
 

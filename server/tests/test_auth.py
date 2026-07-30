@@ -20,8 +20,10 @@ from pydantic import ValidationError
 
 from graph_service import config
 from graph_service.auth import require_api_key
+from graph_service.config import MIN_API_KEY_LENGTH
 
 SECRET = 'test-api-key-6Yp2Qk'
+assert len(SECRET) >= MIN_API_KEY_LENGTH, 'the fixture key must itself be a valid key'
 
 # The allowlist the app is held to: every other route must carry the auth dependency. An
 # allowlist rather than a list of protected prefixes, so a route added under a name nobody
@@ -101,6 +103,28 @@ def test_no_key_means_no_service(build_app, graphiti_api_key):
         pass  # never reached: entering the lifespan is what raises
 
 
+def test_a_guessable_key_is_refused_at_startup(build_app):
+    """A key too short to survive guessing fails the deploy, rather than serving traffic.
+
+    There is no rate limiting in front of this API, so key length is the whole brute-force
+    defence. Render's generated value is long, but rotation is a hand edit in the Dashboard
+    and nothing there would reject `GRAPHITI_API_KEY=dev` — this is what does.
+
+    One character under the floor, so the boundary is pinned rather than a token short value
+    that would still pass a floor set lower by accident.
+    """
+    app = build_app('k' * (MIN_API_KEY_LENGTH - 1))
+    with pytest.raises(ValidationError, match='string_too_short'), TestClient(app):
+        pass  # never reached: entering the lifespan is what raises
+
+
+def test_a_key_at_the_length_floor_is_accepted(build_app):
+    """The other half of the boundary: the floor is inclusive, so it can't drift upward."""
+    key = 'k' * MIN_API_KEY_LENGTH
+    app = build_app(key)
+    _assert_passed_auth(_search(app, {'Authorization': f'Bearer {key}'}))
+
+
 def test_configured_key_accepts_the_right_bearer_token(build_app):
     app = build_app(SECRET)
     _assert_passed_auth(_search(app, {'Authorization': f'Bearer {SECRET}'}))
@@ -130,14 +154,17 @@ def test_configured_key_rejects_everything_else(build_app, headers):
     assert _search(app, headers).status_code == 401
 
 
+# Every value here is comfortably over MIN_API_KEY_LENGTH, and the match below pins the
+# pattern error specifically: a short non-ASCII key would be rejected for its length and the
+# case would pass without the ASCII rule existing at all.
 @pytest.mark.parametrize(
     'graphiti_api_key',
     [
-        pytest.param('clé-secrète', id='accent'),
-        pytest.param('key-with-🔑', id='emoji'),
+        pytest.param('clé-secrète-assez-longue', id='accent'),
+        pytest.param('key-with-an-emoji-🔑', id='emoji'),
         # A tab survives the strip on RequiredStr only in the middle of a value, and a
         # control character in a header value is malformed however it is encoded.
-        pytest.param('key\twith\ttabs', id='control-char'),
+        pytest.param('key\twith\ttabs\tin\tit', id='control-char'),
     ],
 )
 def test_a_non_ascii_key_is_refused_at_startup(build_app, graphiti_api_key):
@@ -150,7 +177,7 @@ def test_a_non_ascii_key_is_refused_at_startup(build_app, graphiti_api_key):
     with nothing to distinguish the two. Failing at startup names the actual problem.
     """
     app = build_app(graphiti_api_key)
-    with pytest.raises(ValidationError, match='graphiti_api_key'), TestClient(app):
+    with pytest.raises(ValidationError, match='string_pattern_mismatch'), TestClient(app):
         pass  # never reached: entering the lifespan is what raises
 
 

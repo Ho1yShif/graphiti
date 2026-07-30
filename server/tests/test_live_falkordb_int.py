@@ -53,7 +53,7 @@ pytestmark = [pytest.mark.integration]
 # The key the live server is spawned with. Auth is mandatory, so it needs one to boot at all.
 # Pinned rather than inherited: a GRAPHITI_API_KEY in the project-root .env would otherwise
 # reach the subprocess through load_dotenv above and 401 every request here.
-API_KEY = 'srvtest-api-key'
+API_KEY = 'srvtest-api-key-Rk4Wm2'
 AUTH_HEADERS = {'Authorization': f'Bearer {API_KEY}'}
 
 

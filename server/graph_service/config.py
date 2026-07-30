@@ -35,6 +35,15 @@ OptionalInt = Annotated[int | None, BeforeValidator(_blank_to_none)]
 # put in a header and fail on.
 RequiredStr = Annotated[str, BeforeValidator(_strip)]
 
+# Entropy floor for graphiti_api_key. There is no rate limiting in front of this API, so the
+# length of the key is the whole of its brute-force defence — 16 printable characters is the
+# point past which guessing it online stops being a strategy. Render's generated value is
+# comfortably longer; this exists for the keys people choose by hand.
+#
+# A named constant rather than a literal in the Field, so tests/test_auth.py can pin the
+# boundary against this number instead of restating it and drifting from it later.
+MIN_API_KEY_LENGTH = 16
+
 
 class Settings(BaseSettings):
     # Rejected when blank rather than defaulted, so a missing key fails the deploy at
@@ -66,7 +75,18 @@ class Settings(BaseSettings):
     # and not others. Rejected here rather than left to auth.py, so rotating the key to a
     # passphrase fails the deploy — with this message — instead of quietly 401ing the
     # operator who just set it, which looks identical to having typed it in wrong.
-    graphiti_api_key: RequiredStr = Field(min_length=1, pattern=r'^[\x20-\x7e]+$')
+    #
+    # The length floor is the same bargain applied to strength. Render generates a strong
+    # value, but rotation is a hand edit in the Dashboard and nothing there would stop
+    # `GRAPHITI_API_KEY=dev`; with no rate limiting in front of this API, that key is the
+    # only thing between a stranger and the graph. Refusing it at startup fails the deploy
+    # while Render keeps serving the previous version, which is the safe direction to fail.
+    #
+    # Caveat for whoever reads a failed deploy log: pydantic includes the offending value in
+    # its message, so a key rejected here is echoed into the log. That is only ever a key
+    # that never authenticated, and scrubbing it would mean catching ValidationError in
+    # get_settings() and degrading the startup message for every other setting.
+    graphiti_api_key: RequiredStr = Field(min_length=MIN_API_KEY_LENGTH, pattern=r'^[\x20-\x7e]+$')
 
     model_config = SettingsConfigDict(env_file='.env', extra='ignore')
 
