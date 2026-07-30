@@ -12,14 +12,15 @@ included without the auth dependency, and only the real module can catch that.
 """
 
 import importlib
+import time
 
 import pytest
 from fastapi.routing import APIRoute
 from fastapi.testclient import TestClient
 from pydantic import ValidationError
 
-from graph_service import config
-from graph_service.auth import require_api_key
+from graph_service import auth, config
+from graph_service.auth import MAX_FAILED_AUTH, require_api_key
 from graph_service.config import MIN_API_KEY_LENGTH
 
 SECRET = 'test-api-key-6Yp2Qk'
@@ -30,6 +31,20 @@ assert len(SECRET) >= MIN_API_KEY_LENGTH, 'the fixture key must itself be a vali
 # predicted is a failure by default. The docs are deliberately public — see main.py.
 PUBLIC_PATHS = {'/healthcheck', '/docs', '/docs/oauth2-redirect', '/redoc', '/openapi.json'}
 DOCS_PATHS = ['/openapi.json', '/docs', '/redoc']
+
+
+@pytest.fixture(autouse=True)
+def _fresh_rejection_budget():
+    """Empty the failed-auth budget around every case.
+
+    Autouse and not optional: the budget lives in graph_service.auth, which build_app does
+    not reload, so rejections would otherwise accumulate across the whole module. This file
+    provokes more than MAX_FAILED_AUTH of them, so without this the cases that assert 401
+    would start seeing 429 — and in an order-dependent way that a single -k run would hide.
+    """
+    auth._recent_rejections.clear()
+    yield
+    auth._recent_rejections.clear()
 
 
 @pytest.fixture
@@ -106,9 +121,10 @@ def test_no_key_means_no_service(build_app, graphiti_api_key):
 def test_a_guessable_key_is_refused_at_startup(build_app):
     """A key too short to survive guessing fails the deploy, rather than serving traffic.
 
-    There is no rate limiting in front of this API, so key length is the whole brute-force
-    defence. Render's generated value is long, but rotation is a hand edit in the Dashboard
-    and nothing there would reject `GRAPHITI_API_KEY=dev` — this is what does.
+    The rejection budget stops a stranger working through the keyspace; it does nothing about
+    a key that is already at the front of it. Render's generated value is long, but rotation
+    is a hand edit in the Dashboard and nothing there would reject `GRAPHITI_API_KEY=dev` —
+    this is what does.
 
     One character under the floor, so the boundary is pinned rather than a token short value
     that would still pass a floor set lower by accident.
@@ -179,6 +195,56 @@ def test_a_non_ascii_key_is_refused_at_startup(build_app, graphiti_api_key):
     app = build_app(graphiti_api_key)
     with pytest.raises(ValidationError, match='string_pattern_mismatch'), TestClient(app):
         pass  # never reached: entering the lifespan is what raises
+
+
+def test_a_burst_of_wrong_keys_is_rate_limited(build_app):
+    """The key can't be brute-forced, and the endpoint isn't a free scanner target.
+
+    Exactly MAX_FAILED_AUTH rejections are spent first, so the boundary is pinned in both
+    directions: the last one inside the budget still gets its 401, and the first one past it
+    does not.
+    """
+    app = build_app(SECRET)
+    wrong = {'Authorization': 'Bearer wrong-key-but-long-enough'}
+    for attempt in range(MAX_FAILED_AUTH):
+        assert _search(app, wrong).status_code == 401, f'budgeted attempt {attempt} was refused'
+
+    limited = _search(app, wrong)
+    assert limited.status_code == 429
+    # Conventional on a 429, and the client has no other way to know how long to wait.
+    assert 0 < int(limited.headers['Retry-After']) <= auth.FAILED_AUTH_WINDOW_SECONDS
+
+
+def test_the_right_key_is_never_rate_limited(build_app):
+    """The reason a global budget is safe: it can't be used to lock a real client out.
+
+    Without this, one stranger guessing keys would take the API down for whoever holds the
+    real one — a worse outcome than the brute-force the budget exists to stop.
+    """
+    app = build_app(SECRET)
+    wrong = {'Authorization': 'Bearer wrong-key-but-long-enough'}
+    for _ in range(MAX_FAILED_AUTH + 5):
+        _search(app, wrong)
+    assert _search(app, wrong).status_code == 429, 'the budget should be spent by now'
+
+    _assert_passed_auth(_search(app, {'Authorization': f'Bearer {SECRET}'}))
+
+
+def test_the_budget_recovers_once_the_window_passes(build_app):
+    """A spent budget is a delay, not a latch — otherwise one burst closes the API for good.
+
+    The window is moved rather than waited out: the deque holds monotonic timestamps, so
+    back-dating them past the window is the same thing to the code and keeps the suite fast.
+    """
+    app = build_app(SECRET)
+    wrong = {'Authorization': 'Bearer wrong-key-but-long-enough'}
+    for _ in range(MAX_FAILED_AUTH):
+        _search(app, wrong)
+    assert _search(app, wrong).status_code == 429
+
+    stale = time.monotonic() - auth.FAILED_AUTH_WINDOW_SECONDS - 1
+    auth._recent_rejections.extend([stale] * MAX_FAILED_AUTH)
+    assert _search(app, wrong).status_code == 401
 
 
 def test_rejection_names_the_scheme_to_retry_with(build_app):

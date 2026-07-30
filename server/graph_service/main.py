@@ -22,6 +22,11 @@ async def lifespan(_: FastAPI):
 # hiding it would cost real usability, since a browser can't put an Authorization header on
 # a plain navigation. The key on the routes below is the control that matters; Swagger's
 # Authorize button picks it up from their dependency and Try it out works with it.
+#
+# A deliberate departure from the usual advice to gate schema routes, kept because this
+# template's source is public: routers/retrieve.py and routers/ingest.py are the same map
+# the schema is, so closing it withholds nothing from anyone who can read the repo. Revisit
+# it if this ever ships as a private service, where that reasoning stops holding.
 app = FastAPI(title='Graphiti API', lifespan=lifespan)
 
 

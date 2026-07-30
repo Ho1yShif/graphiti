@@ -79,6 +79,13 @@ _graphiti_check_status() {
     401)
       echo '  401 — GRAPHITI_API_KEY was rejected. Re-copy it from the Render Dashboard:' >&2
       echo '    graphiti-api -> Environment -> GRAPHITI_API_KEY' >&2 ;;
+    429)
+      # Reachable in practice only with a wrong key: the service budgets rejections and
+      # never limits a request that carries the right one. So say what a bare "HTTP 429"
+      # would not — that this is still the key, several attempts later.
+      echo '  429 — too many rejected keys; the service is throttling them. The key is' >&2
+      echo '  still wrong. Re-copy it, then wait a minute and retry:' >&2
+      echo '    graphiti-api -> Environment -> GRAPHITI_API_KEY' >&2 ;;
     000)
       echo "  no response from $GRAPHITI_URL — is the service up? try: health" >&2 ;;
     *)
@@ -113,8 +120,14 @@ use_group() {
 # Plain curl, not _graphiti_curl: /healthcheck is the one endpoint that takes no key, and
 # calling it without one is what proves that.
 health() {
-  curl -sS -o /dev/null -w '  healthcheck → HTTP %{http_code} in %{time_total}s\n' \
-    "$GRAPHITI_URL/healthcheck"
+  # http_code, not status: status is read-only in zsh. Same reason as ingest below.
+  local metrics http_code
+  metrics=$(curl -sS -o /dev/null -w '%{http_code} %{time_total}' "$GRAPHITI_URL/healthcheck")
+  http_code="${metrics% *}"
+  printf '  healthcheck → HTTP %s in %ss\n' "$http_code" "${metrics#* }"
+  # Last, so its exit status becomes health's: printing "HTTP 000" and returning success
+  # made `health && ingest` run the ingest against a service that never answered.
+  _graphiti_check_status "$http_code"
 }
 
 # Rewrite the sample episode's group_id to match $GRAPHITI_GROUP and POST it.

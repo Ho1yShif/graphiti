@@ -35,10 +35,12 @@ OptionalInt = Annotated[int | None, BeforeValidator(_blank_to_none)]
 # put in a header and fail on.
 RequiredStr = Annotated[str, BeforeValidator(_strip)]
 
-# Entropy floor for graphiti_api_key. There is no rate limiting in front of this API, so the
-# length of the key is the whole of its brute-force defence — 16 printable characters is the
-# point past which guessing it online stops being a strategy. Render's generated value is
-# comfortably longer; this exists for the keys people choose by hand.
+# Entropy floor for graphiti_api_key. auth.py budgets rejections, so guessing this key over
+# the network is already hopeless; what a length floor adds is that the key is not *already*
+# guessed. `dev` and `test` fall to the first attempt of any wordlist, and a budget that
+# allows ten attempts a minute is no defence against a key sitting in the first ten. 16
+# printable characters is past where a hand-chosen key is a dictionary word. Render's
+# generated value is comfortably longer; this exists for the keys people choose themselves.
 #
 # A named constant rather than a literal in the Field, so tests/test_auth.py can pin the
 # boundary against this number instead of restating it and drifting from it later.
@@ -78,9 +80,10 @@ class Settings(BaseSettings):
     #
     # The length floor is the same bargain applied to strength. Render generates a strong
     # value, but rotation is a hand edit in the Dashboard and nothing there would stop
-    # `GRAPHITI_API_KEY=dev`; with no rate limiting in front of this API, that key is the
-    # only thing between a stranger and the graph. Refusing it at startup fails the deploy
-    # while Render keeps serving the previous version, which is the safe direction to fail.
+    # `GRAPHITI_API_KEY=dev` — a key the rejection budget in auth.py cannot save, because it
+    # is guessed on the first attempt rather than the ten-thousandth. Refusing it at startup
+    # fails the deploy while Render keeps serving the previous version, which is the safe
+    # direction to fail.
     #
     # Caveat for whoever reads a failed deploy log: pydantic includes the offending value in
     # its message, so a key rejected here is echoed into the log. That is only ever a key

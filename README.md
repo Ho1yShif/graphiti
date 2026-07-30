@@ -92,23 +92,29 @@ from `graphiti-api` over Render's private network.
    Auth is mandatory — the service won't start without a key, so a fork can't go live open by
    accident. The generated value persists across deploys, so rotating it is up to you: edit it
    in the Dashboard and Render restarts the service with the new value. The replacement has to
-   be at least 16 printable-ASCII characters, as the generated one is. Length because nothing
-   rate-limits this API, so the key is all that stands between a stranger and your graph, and
-   `dev` is not a key; printable ASCII because HTTP sends header values as latin-1 and clients
-   disagree about how to encode anything outside it, so a key with an accent or an emoji in it
-   would authenticate for some clients and not others. The service refuses to start on either
-   rather than leaving you to discover it as a 401, so a bad rotation fails the deploy and
+   be at least 16 printable-ASCII characters, as the generated one is. Length because `dev` is
+   not a key — the service limits failed attempts, but that can't help against one that's
+   guessed on the first try; printable ASCII because HTTP sends header values as latin-1 and
+   clients disagree about how to encode anything outside it, so a key with an accent or an emoji
+   in it would authenticate for some clients and not others. The service refuses to start on
+   either rather than leaving you to discover it as a 401, so a bad rotation fails the deploy and
    Render keeps serving the previous version.
+
+   A wrong or missing key gets `401` with `WWW-Authenticate: Bearer`. After 10 rejections in a
+   minute the service answers `429` with `Retry-After` instead, so the key can't be worked
+   through and your URL isn't a free target for scanners. Requests carrying the *right* key are
+   never rate limited, so a stranger hammering your service can't lock you out of it.
 
    The API docs at `/docs` stay open, and you can authorize them in the browser: click
    **Authorize**, paste the key, and **Try it out** works against your deployment.
 
 > **This key is the only thing in front of your graph.** It's a single shared secret with no
-> scopes, no per-user identity, and no rate limiting — enough to keep a stranger who finds your
-> URL from writing to your graph and spending your OpenAI key, and not a substitute for real
-> authorization. Before you point production traffic at it, put it behind your own auth or an
-> API gateway. Either way, use a dedicated OpenAI key you can revoke and set a monthly spend
-> cap in the OpenAI console — that cap is your backstop.
+> scopes and no per-user identity — enough to keep a stranger who finds your URL from writing to
+> your graph and spending your OpenAI key, and not a substitute for real authorization. The
+> rejection limit stops guessing; it does nothing about a caller who *has* the key, and there's
+> no cap on what one of those can spend. Before you point production traffic at it, put it behind
+> your own auth or an API gateway. Either way, use a dedicated OpenAI key you can revoke and set
+> a monthly spend cap in the OpenAI console — that cap is your backstop.
 
 ### Using the app
 
@@ -243,6 +249,11 @@ Auth is mandatory locally too — there's no off switch — so compose defaults
 against `http://localhost:8001`; set your own value in `.env` to override it. Running the same
 authenticated path locally as on Render is the point: nothing about auth is left untested until
 you deploy.
+
+That default key is committed to this repo, so it protects nothing — which is why every port in
+`docker-compose.yml` is published to `127.0.0.1` rather than to every interface. The stack is
+reachable from your machine and nowhere else. If you need to reach it from another host, drop the
+`127.0.0.1:` prefix and set a real `GRAPHITI_API_KEY` in the same edit.
 
 ## Learn more
 
