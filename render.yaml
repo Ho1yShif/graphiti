@@ -7,7 +7,10 @@
 # prompts for it at deploy time and stores it outside the repo.
 
 previews:
-  generation: off
+  # Quoted, because bare off is a YAML boolean. Render's parser reads it as the string
+  # either way, but render.yaml.json types this field as an enum of strings, so unquoted
+  # it fails `render blueprints validate` and lights up any schema-aware editor.
+  generation: 'off'
 
 projects:
   - name: graphiti
