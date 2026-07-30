@@ -83,7 +83,7 @@ def test_no_key_means_no_service(build_app, graphiti_api_key):
     """
     app = build_app(graphiti_api_key)
     with pytest.raises(ValidationError, match='graphiti_api_key'), TestClient(app):
-        pass  # pragma: no cover - the lifespan raises on entry
+        pass  # never reached: entering the lifespan is what raises
 
 
 def test_configured_key_accepts_the_right_bearer_token(build_app):

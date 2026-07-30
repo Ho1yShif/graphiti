@@ -13,6 +13,11 @@ def _blank_to_none(value: Any) -> Any:
     return value
 
 
+def _strip(value: Any) -> Any:
+    """Trim surrounding whitespace from an env var that has to be present."""
+    return value.strip() if isinstance(value, str) else value
+
+
 # A .env file and a dashboard UI both make it easy to define a variable with an empty
 # value, which is not the same thing as leaving it out: '' arrives here as a real setting
 # and gets passed on to the clients. A blank model_name would be sent to OpenAI as the
@@ -28,7 +33,7 @@ OptionalInt = Annotated[int | None, BeforeValidator(_blank_to_none)]
 # min_length check on the fields below rather than passing as a one-space secret. Stripping
 # also survives a key pasted with a trailing newline, which the OpenAI SDK would otherwise
 # put in a header and fail on.
-RequiredStr = Annotated[str, BeforeValidator(lambda v: v.strip() if isinstance(v, str) else v)]
+RequiredStr = Annotated[str, BeforeValidator(_strip)]
 
 
 class Settings(BaseSettings):

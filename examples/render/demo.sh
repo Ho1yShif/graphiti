@@ -55,9 +55,10 @@ unset _graphiti_sourced
 
 command -v jq >/dev/null || echo 'demo.sh: jq not found — brew install jq'
 
-# curl with the bearer header attached. Every call to the API goes through this, so the
-# header is built in one place and a new helper cannot forget it. Reading the variable per
-# call means re-exporting a rotated key takes effect without re-sourcing.
+# curl with the bearer header attached. Every call to an authenticated endpoint goes through
+# this — only health() bypasses it, since /healthcheck takes no key — so the header is built
+# in one place and a new helper cannot forget it. Reading the variable per call means
+# re-exporting a rotated key takes effect without re-sourcing.
 #
 # -H @- reads the header from stdin rather than taking it as an argument, so the key never
 # lands in this process's argv, where any other user on the machine could read it out of
@@ -109,6 +110,8 @@ use_group() {
   echo "  group: $GRAPHITI_GROUP"
 }
 
+# Plain curl, not _graphiti_curl: /healthcheck is the one endpoint that takes no key, and
+# calling it without one is what proves that.
 health() {
   curl -sS -o /dev/null -w '  healthcheck → HTTP %{http_code} in %{time_total}s\n' \
     "$GRAPHITI_URL/healthcheck"
