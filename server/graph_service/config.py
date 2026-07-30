@@ -59,7 +59,14 @@ class Settings(BaseSettings):
     # every episode, so a deployment that boots open is never what anyone wanted. A missing
     # key fails at startup instead — an open service and a service that 401s everything
     # both look healthy to Render. Render generates the value; compose supplies a dev one.
-    graphiti_api_key: RequiredStr = Field(min_length=1)
+    #
+    # The pattern is printable ASCII, which is what can survive the trip through an HTTP
+    # header: values go over the wire as latin-1 and clients disagree about how to encode
+    # anything outside ASCII, so a key with an accent in it authenticates for some clients
+    # and not others. Rejected here rather than left to auth.py, so rotating the key to a
+    # passphrase fails the deploy — with this message — instead of quietly 401ing the
+    # operator who just set it, which looks identical to having typed it in wrong.
+    graphiti_api_key: RequiredStr = Field(min_length=1, pattern=r'^[\x20-\x7e]+$')
 
     model_config = SettingsConfigDict(env_file='.env', extra='ignore')
 

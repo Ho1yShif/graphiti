@@ -6,9 +6,10 @@ the deployment's OpenAI key on every episode. The key is required at startup (se
 config.py), so this dependency can assume there is one — Render generates the value when it
 first creates the service, and compose supplies a local one.
 
-Keep the key ASCII, as the generated one is. Header values are latin-1 on the wire and
-clients encode anything outside it inconsistently, so a key with an accent in it may never
-match what arrives here — it fails closed, locking you out rather than letting anyone in.
+The configured key is constrained to printable ASCII by config.py, because header values go
+over the wire as latin-1 and clients encode anything outside it inconsistently — a key with
+an accent in it would authenticate for some clients and not others. What arrives in the
+header is still arbitrary, though, which is why the comparison below encodes both sides.
 
 /healthcheck stays public: Render polls it to decide the service is live, and it exposes
 nothing about the graph.
@@ -35,10 +36,10 @@ async def require_api_key(
     # compare_digest rather than ==, so a wrong key can't be recovered a byte at a time
     # from how long it takes to reject. It needs both sides to exist, hence the guard.
     #
-    # Compared as bytes: compare_digest raises TypeError on a non-ASCII str, and either
-    # side can be one — Starlette decodes headers as latin-1, and nothing stops an
-    # operator rotating the key to a value with an accent in it. Encoding first makes both
-    # a 401 rather than a 500.
+    # Compared as bytes: compare_digest raises TypeError on a non-ASCII str, and Starlette
+    # decodes headers as latin-1, so a client sending a stray high byte would otherwise get
+    # a 500. Encoding first makes it a 401 — the configured side is already ASCII by
+    # validation, but the header is whatever a caller chose to send.
     if credentials is None or not secrets.compare_digest(
         credentials.credentials.encode(), settings.graphiti_api_key.encode()
     ):

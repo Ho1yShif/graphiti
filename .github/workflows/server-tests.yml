@@ -1,12 +1,18 @@
 name: Server Tests
 
-# Live end-to-end regression tests for the Graphiti graph_service (REST API)
-# against FalkorDB and a real OpenAI model. Spawns the FastAPI server as a
-# subprocess and exercises the public API end to end (ingest -> async process ->
-# search -> delete). Runs on PRs and pushes to main that touch the server. The
-# OpenAI key comes from the `development` GitHub environment; fork PRs receive no
-# secrets, so the suite skips itself there (the test module skips when
-# OPENAI_API_KEY is unset).
+# Tests for the Graphiti graph_service (REST API), in two jobs:
+#
+# - unit-tests: everything that needs no secrets and no database, notably the auth
+#   guards in tests/test_auth.py. Runs on every PR including forks, because a
+#   router included without its auth dependency has to fail the build that adds it
+#   rather than the deploy that ships it.
+# - live-server-tests: the end-to-end suite against FalkorDB and a real OpenAI
+#   model. Spawns the FastAPI server as a subprocess and exercises the public API
+#   end to end (ingest -> async process -> search -> delete). The OpenAI key comes
+#   from the `development` GitHub environment; fork PRs receive no secrets, so the
+#   suite skips itself there (the test module skips when OPENAI_API_KEY is unset).
+#
+# Both run on PRs and pushes to main that touch the server.
 on:
   push:
     branches: [main]
@@ -29,6 +35,32 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  unit-tests:
+    runs-on: depot-ubuntu-22.04
+    # No `environment:` and no secrets: that is what lets this job run on fork PRs,
+    # which is where an unprotected new route is most likely to arrive.
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
+      - name: Set up Python
+        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5
+        with:
+          python-version: "3.10"
+      - name: Install uv
+        uses: astral-sh/setup-uv@caf0cab7a618c569241d31dcd442f54681755d39 # v3
+        with:
+          version: "latest"
+      - name: Install dependencies
+        working-directory: server
+        run: uv sync --extra dev
+      - name: Run unit tests
+        working-directory: server
+        # Deselect the live suite by marker rather than naming files, so a new test
+        # module is picked up here by default and only opts out by marking itself
+        # integration. --strict-markers turns a typo'd marker into an error instead
+        # of a silently empty selection.
+        run: uv run pytest -m "not integration" --strict-markers -p no:cacheprovider
+
   live-server-tests:
     runs-on: depot-ubuntu-22.04
     environment: development

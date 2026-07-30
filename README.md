@@ -91,10 +91,12 @@ from `graphiti-api` over Render's private network.
 
    Auth is mandatory — the service won't start without a key, so a fork can't go live open by
    accident. The generated value persists across deploys, so rotating it is up to you: edit it
-   in the Dashboard and Render restarts the service with the new value. Keep the replacement
-   ASCII, as the generated one is — HTTP sends header values as latin-1 and clients disagree
-   about how to encode anything outside it, so a key with an accent or an emoji in it may
-   reject every request including yours.
+   in the Dashboard and Render restarts the service with the new value. The replacement has to
+   be printable ASCII, as the generated one is — HTTP sends header values as latin-1 and
+   clients disagree about how to encode anything outside it, so a key with an accent or an
+   emoji in it would authenticate for some clients and not others. The service refuses to
+   start on one rather than leaving you to discover it as a 401, so a bad rotation fails the
+   deploy and Render keeps serving the previous version.
 
    The API docs at `/docs` stay open, and you can authorize them in the browser: click
    **Authorize**, paste the key, and **Try it out** works against your deployment.
@@ -235,7 +237,7 @@ and run `docker compose --profile falkordb up`. That mirrors this Blueprint — 
 pairing, API plus Neo4j, on port 8000.
 
 Auth is mandatory locally too — there's no off switch — so compose defaults
-`GRAPHITI_API_KEY` to `local-dev-key`. Export that and every example above works unchanged
+`GRAPHITI_API_KEY` to `insecure-local-dev-key`. Export that and every example above works unchanged
 against `http://localhost:8001`; set your own value in `.env` to override it. Running the same
 authenticated path locally as on Render is the point: nothing about auth is left untested until
 you deploy.

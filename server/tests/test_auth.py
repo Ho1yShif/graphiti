@@ -32,9 +32,26 @@ DOCS_PATHS = ['/openapi.json', '/docs', '/redoc']
 
 @pytest.fixture
 def build_app(monkeypatch):
-    """Return a factory that builds the real app with GRAPHITI_API_KEY set to a given value."""
+    """Return a factory that builds the real app with GRAPHITI_API_KEY set to a given value.
+
+    What the process environment says is the only thing these cases should depend on, and two
+    things otherwise get a say. Settings reads env_file='.env' relative to the cwd, which is
+    server/ under `make test`; and graphiti_core calls load_dotenv() when it is imported,
+    which searches upwards from its own location inside server/.venv and so finds the same
+    file whatever the cwd is. Either one hands a developer with a server/.env the very key
+    that test_no_key_means_no_service asserts the absence of, failing the suite on their
+    machine only. So: no env file for Settings, and the environment is set up after the
+    import that may inject one.
+    """
+    monkeypatch.setitem(config.Settings.model_config, 'env_file', None)
 
     def _build(graphiti_api_key: str | None):
+        # Imported before the environment is arranged, not after, because this is the import
+        # that triggers load_dotenv() — on the first call, at least, which is the one that
+        # matters. Nothing here reads settings yet: the app is assembled at import time but
+        # get_settings() is not called until the lifespan runs.
+        import graph_service.main as main
+
         monkeypatch.setenv('OPENAI_API_KEY', 'unused-by-these-tests')
         if graphiti_api_key is None:
             monkeypatch.delenv('GRAPHITI_API_KEY', raising=False)
@@ -43,8 +60,6 @@ def build_app(monkeypatch):
         # Settings are cached and the app is built at import time, so both have to be
         # discarded for a new key to take effect.
         config.get_settings.cache_clear()
-        import graph_service.main as main
-
         return importlib.reload(main).app
 
     yield _build
@@ -115,19 +130,28 @@ def test_configured_key_rejects_everything_else(build_app, headers):
     assert _search(app, headers).status_code == 401
 
 
-def test_a_non_ascii_configured_key_still_only_rejects(build_app):
-    """A key with an accent in it must not take the whole service down.
+@pytest.mark.parametrize(
+    'graphiti_api_key',
+    [
+        pytest.param('clé-secrète', id='accent'),
+        pytest.param('key-with-🔑', id='emoji'),
+        # A tab survives the strip on RequiredStr only in the middle of a value, and a
+        # control character in a header value is malformed however it is encoded.
+        pytest.param('key\twith\ttabs', id='control-char'),
+    ],
+)
+def test_a_non_ascii_key_is_refused_at_startup(build_app, graphiti_api_key):
+    """A key that can't survive an HTTP header fails the deploy, rather than every request.
 
-    Render generates an ASCII key, but rotating it is a manual edit and nothing there
-    rejects a passphrase. Compared as str, such a key raised TypeError on every request and
-    returned 500 — the service answered nothing at all, rather than rejecting the requests
-    that were wrong. It still can't be relied on to authenticate, whatever the client sends,
-    which is why auth.py says to keep the key ASCII; what is guaranteed here is a clean 401
-    instead of a crash.
+    Render generates an ASCII key, but rotating it is a manual edit and nothing in the
+    Dashboard rejects a passphrase. Such a key authenticates for a client that encodes the
+    header as latin-1 and not for one that uses UTF-8, so it can't be relied on either way —
+    and an operator who set it would see the same 401 as someone who typed the key in wrong,
+    with nothing to distinguish the two. Failing at startup names the actual problem.
     """
-    app = build_app('clé-secrète')
-    assert _search(app, {'Authorization': 'Bearer wrong-key'}).status_code == 401
-    assert _search(app, {b'Authorization': 'Bearer clé-secrète'.encode()}).status_code == 401
+    app = build_app(graphiti_api_key)
+    with pytest.raises(ValidationError, match='graphiti_api_key'), TestClient(app):
+        pass  # never reached: entering the lifespan is what raises
 
 
 def test_rejection_names_the_scheme_to_retry_with(build_app):

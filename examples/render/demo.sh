@@ -47,7 +47,7 @@ unset _graphiti_sourced
 
 : "${GRAPHITI_URL:?set GRAPHITI_URL first, e.g. export GRAPHITI_URL=https://graphiti-api.onrender.com}"
 # Every endpoint but /healthcheck needs it, so refuse up front rather than 401 six times.
-# A local compose stack defaults to local-dev-key.
+# A local compose stack defaults to insecure-local-dev-key.
 : "${GRAPHITI_API_KEY:?set GRAPHITI_API_KEY first — graphiti-api -> Environment in the Render Dashboard}"
 : "${GRAPHITI_GROUP:=demo}"
 # The default search string watch_ingest counts facts against.
