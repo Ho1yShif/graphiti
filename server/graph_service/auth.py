@@ -1,10 +1,8 @@
 """Bearer-token auth for the graph endpoints.
 
-Every endpoint except /healthcheck requires GRAPHITI_API_KEY as a bearer token, with no way to
-switch it off: the API writes to a shared graph and spends the deployment's OpenAI key on every
-episode. config.py requires the key at startup, so this module can assume there is one.
-
-/healthcheck stays public — Render polls it to decide the service is live.
+Every endpoint except /healthcheck requires GRAPHITI_API_KEY, with no way to switch it off: the
+API writes to a shared graph and spends the deployment's OpenAI key on every episode. config.py
+requires the key at startup, so this module can assume there is one.
 """
 
 import hashlib
@@ -18,37 +16,29 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 
 from graph_service.config import ZepEnvDep
 
-# auto_error=False so a missing or non-Bearer header arrives as None. On its own HTTPBearer
-# answers 403; the right answer is a 401 with WWW-Authenticate, which tells the client what to
-# send instead of just no.
+# auto_error=False so a missing or non-Bearer header arrives as None: HTTPBearer answers 403 on
+# its own, and the right answer is a 401 naming the scheme to retry with.
 _bearer = HTTPBearer(auto_error=False, description='The GRAPHITI_API_KEY set on this service.')
 
-# Rejections this service will issue in a window before answering 429 instead, so the key can't
-# be worked through and the URL isn't a free scanner target.
+# Rejections allowed per window before answering 429, so the key can't be worked through.
 #
-# Global rather than per-IP: behind Render's proxy every request arrives from the proxy's
-# address, and trusting the client-supplied X-Forwarded-For would hand an attacker the bucket
-# key. A global budget can't be used to lock a real client out, because require_api_key checks
-# the key *before* the budget — only wrong keys compete for it.
-#
-# In-process, so N instances allow N times this. Fine at any N against a 16-character minimum
-# keyspace, and the point of keeping it in memory: a shared counter would put FalkorDB on the
-# auth path, so the graph store being slow would become the API being closed.
+# Global, not per-IP: behind Render's proxy every request carries the proxy's address, and
+# trusting X-Forwarded-For would hand an attacker the bucket key. It can't lock out a real client
+# because require_api_key checks the key before the budget. In-process, so N instances allow N
+# times this — a shared counter would put FalkorDB on the auth path.
 MAX_FAILED_AUTH = 10
 FAILED_AUTH_WINDOW_SECONDS = 60
 
-# Timestamps of the last MAX_FAILED_AUTH rejections, oldest first. maxlen does the eviction, so
-# the budget is spent exactly when the deque is full and its oldest entry is still inside the
-# window. monotonic, so an NTP correction can't resize the window. No lock: every access below
-# happens between awaits on a single event loop.
+# The last MAX_FAILED_AUTH rejection times, oldest first. maxlen does the eviction, so the budget
+# is spent exactly when the deque is full and its oldest entry is still in the window. monotonic,
+# so an NTP correction can't resize the window. No lock: single event loop.
 _recent_rejections: deque[float] = deque(maxlen=MAX_FAILED_AUTH)
 
 
 def _seconds_until_budget_frees(now: float) -> float | None:
-    """How long until this service will issue another rejection, or None if it will now.
+    """Time until the next rejection is allowed, or None if it already is.
 
-    Positive only when the budget is spent, which is what makes it usable as both the check and
-    the Retry-After value.
+    Positive only when the budget is spent, so it serves as both the check and Retry-After.
     """
     if len(_recent_rejections) < MAX_FAILED_AUTH:
         return None
@@ -59,10 +49,8 @@ def _seconds_until_budget_frees(now: float) -> float | None:
 def _digest(value: str) -> bytes:
     """A fixed-width, constant-time-comparable stand-in for the key.
 
-    Encoded because Starlette decodes header values as latin-1, so what arrives can be any str,
-    and hashlib takes bytes. Hashed so both sides are always 32 bytes: compare_digest returns
-    immediately on a length mismatch, which would leak the key's length to anyone willing to
-    time the rejections.
+    Encoded because Starlette decodes headers as latin-1, so this can be any str. Hashed so both
+    sides are 32 bytes: compare_digest returns early on a length mismatch, leaking key length.
     """
     return hashlib.sha256(value.encode()).digest()
 
@@ -71,9 +59,8 @@ async def require_api_key(
     settings: ZepEnvDep,
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
 ) -> None:
-    # Before the budget, so a caller holding the right key is never rate limited — see
-    # MAX_FAILED_AUTH. compare_digest, so a wrong key can't be recovered a byte at a time from
-    # how long it takes to reject; it needs both sides to exist, hence the guard.
+    # Before the budget, so the right key is never rate limited — see MAX_FAILED_AUTH.
+    # compare_digest so timing can't leak the key; it needs both sides, hence the guard.
     if credentials is not None and secrets.compare_digest(
         _digest(credentials.credentials), _digest(settings.graphiti_api_key)
     ):
@@ -82,19 +69,17 @@ async def require_api_key(
     now = time.monotonic()
     retry_after = _seconds_until_budget_frees(now)
     if retry_after is not None:
-        # Not recorded: counting a request the budget already refused would hold the window
-        # open for as long as the traffic lasts, so a wrong key would never get its 401 back.
+        # Not recorded: counting refused requests would hold the window open under sustained
+        # traffic, so a wrong key would never get its 401 back.
         raise HTTPException(
             status_code=status.HTTP_429_TOO_MANY_REQUESTS,
             detail='Too many failed authentication attempts. Try again shortly.',
-            # Ceil, so a sub-second remainder is never advertised as a 0-second wait.
-            headers={'Retry-After': str(int(retry_after) + 1)},
+            headers={'Retry-After': str(int(retry_after) + 1)},  # ceil: never advertise 0s
         )
 
     _recent_rejections.append(now)
     raise HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
         detail='Invalid or missing API key. Send it as: Authorization: Bearer <GRAPHITI_API_KEY>',
-        # Required on a 401 by RFC 9110, and it tells the client which scheme to retry.
-        headers={'WWW-Authenticate': 'Bearer'},
+        headers={'WWW-Authenticate': 'Bearer'},  # required on a 401 by RFC 9110
     )

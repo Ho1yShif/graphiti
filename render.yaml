@@ -56,19 +56,14 @@ projects:
               - key: OPENAI_API_KEY
                 sync: false
 
-              # Bearer token for every endpoint except /healthcheck, and the server will
-              # not start without it: this API writes to a shared graph and spends
-              # OPENAI_API_KEY on every episode, so a fork is closed from the moment it
-              # goes live. Read the value from the Dashboard (Environment tab) after the
-              # first deploy.
+              # Bearer token for every endpoint except /healthcheck, and the server will not
+              # start without it, so a fork is closed from the moment it goes live. Read the
+              # value from the Dashboard (Environment tab) after the first deploy.
               #
-              # generateValue rather than sync: false keeps the one-click path one click —
-              # Render mints the value instead of prompting for one. It is generated once
-              # and persists across syncs, so clients holding the key keep working; that
-              # also makes rotation a manual edit here or in the Dashboard. A replacement
-              # has to be at least 16 printable-ASCII characters or the service refuses to
-              # start, which fails the deploy rather than weakening the only control in
-              # front of the graph — see graph_service/config.py.
+              # generateValue rather than sync: false keeps the one-click path one click.
+              # Generated once and persistent across syncs, so rotation is a manual edit here or
+              # in the Dashboard; a replacement must be 16+ printable-ASCII characters or the
+              # service refuses to start — see graph_service/config.py.
               - key: GRAPHITI_API_KEY
                 generateValue: true
 

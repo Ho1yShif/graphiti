@@ -1,18 +1,14 @@
 name: Server Tests
 
-# Tests for the Graphiti graph_service (REST API), in two jobs:
+# Tests for the Graphiti graph_service (REST API), in two jobs, both on PRs and pushes to
+# main that touch the server:
 #
-# - unit-tests: everything that needs no secrets and no database, notably the auth
-#   guards in tests/test_auth.py. Runs on every PR including forks, because a
-#   router included without its auth dependency has to fail the build that adds it
-#   rather than the deploy that ships it.
-# - live-server-tests: the end-to-end suite against FalkorDB and a real OpenAI
-#   model. Spawns the FastAPI server as a subprocess and exercises the public API
-#   end to end (ingest -> async process -> search -> delete). The OpenAI key comes
-#   from the `development` GitHub environment; fork PRs receive no secrets, so the
-#   suite skips itself there (the test module skips when OPENAI_API_KEY is unset).
-#
-# Both run on PRs and pushes to main that touch the server.
+# - unit-tests: everything needing no secrets and no database, notably the auth guards in
+#   tests/test_auth.py. Runs on forks too, so a router included without its auth dependency
+#   fails the build that adds it rather than the deploy that ships it.
+# - live-server-tests: end to end against FalkorDB and a real OpenAI model (ingest -> async
+#   process -> search -> delete), with the server as a subprocess. The key comes from the
+#   `development` environment; fork PRs get no secrets, so the module skips itself there.
 on:
   push:
     branches: [main]
@@ -37,8 +33,7 @@ concurrency:
 jobs:
   unit-tests:
     runs-on: depot-ubuntu-22.04
-    # No `environment:` and no secrets: that is what lets this job run on fork PRs,
-    # which is where an unprotected new route is most likely to arrive.
+    # No `environment:` and no secrets, which is what lets it run on fork PRs.
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
@@ -55,10 +50,8 @@ jobs:
         run: uv sync --extra dev
       - name: Run unit tests
         working-directory: server
-        # Deselect the live suite by marker rather than naming files, so a new test
-        # module is picked up here by default and only opts out by marking itself
-        # integration. --strict-markers turns a typo'd marker into an error instead
-        # of a silently empty selection.
+        # By marker, not filename, so a new module is picked up by default and only opts
+        # out by marking itself integration. --strict-markers makes a typo an error.
         run: uv run pytest -m "not integration" --strict-markers -p no:cacheprovider
 
   live-server-tests:
